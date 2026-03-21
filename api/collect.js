@@ -24,7 +24,7 @@ export default async function handler(req, res) {
 
   try {
     // Fetch all fuel types in one call
-    const tkUrl = `https://creativecommons.tankerkoenig.de/json/list.php?lat=${LAT}&lng=${LNG}&rad=${RAD}&sort=price&type=all&apikey=${TK_KEY}`;
+    const tkUrl = `https://creativecommons.tankerkoenig.de/json/list.php?lat=${LAT}&lng=${LNG}&rad=${RAD}&sort=dist&type=all&apikey=${TK_KEY}`;
     const tkRes = await fetch(tkUrl);
     const tkData = await tkRes.json();
 
