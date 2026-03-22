@@ -1,7 +1,0 @@
-{
-  "functions": {
-    "api/collect.js": {
-      "maxDuration": 30
-    }
-  }
-}
