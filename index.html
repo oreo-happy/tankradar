@@ -1478,6 +1478,45 @@ function TankRadar(){
             </div>
           </div>
         </div>
+        {/* BRENT TREND PREDICTION */}
+        {mlModel?.brent&&(
+          <div style={{...s.card,borderColor:mlModel.brent.direction==="rising"?C.red:mlModel.brent.direction==="falling"?C.green:C.border}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <div style={s.cardT}>🛢 {lang==="de"?"Rohölpreis-Trend":"Oil Price Trend"}</div>
+              <span style={{...s.badge(mlModel.brent.direction==="rising"?C.red:mlModel.brent.direction==="falling"?C.green:C.amber),fontSize:9}}>
+                {mlModel.brent.direction==="rising"?"↑":mlModel.brent.direction==="falling"?"↓":"→"} {mlModel.brent.trend14d>0?"+":""}{mlModel.brent.trend14d}% (14d)
+              </span>
+            </div>
+            <div style={{display:"flex",gap:12,flexWrap:"wrap",marginBottom:12}}>
+              <div style={{flex:"1 1 100px",padding:10,borderRadius:8,background:C.glass,textAlign:"center"}}>
+                <div style={{fontSize:10,color:C.muted,marginBottom:2}}>Brent</div>
+                <div style={{fontFamily:"JetBrains Mono,monospace",fontSize:18,fontWeight:700}}>${mlModel.brent.latest?.price}</div>
+                <div style={{fontSize:10,color:C.dim}}>{mlModel.brent.latest?.date}</div>
+              </div>
+              <div style={{flex:"1 1 100px",padding:10,borderRadius:8,background:mlModel.brent.predictedPumpChangeCt>2?C.redDk:mlModel.brent.predictedPumpChangeCt<-2?C.greenGlow:C.glass,textAlign:"center"}}>
+                <div style={{fontSize:10,color:C.muted,marginBottom:2}}>{lang==="de"?"Erwartete Änderung":"Expected Change"}</div>
+                <div style={{fontFamily:"JetBrains Mono,monospace",fontSize:18,fontWeight:700,color:mlModel.brent.predictedPumpChangeCt>0?C.red:mlModel.brent.predictedPumpChangeCt<0?C.green:C.text}}>
+                  {mlModel.brent.predictedPumpChangeCt>0?"+":""}{mlModel.brent.predictedPumpChangeCt} ct/L
+                </div>
+                <div style={{fontSize:10,color:C.dim}}>{lang==="de"?"nächste 1-3 Wochen":"next 1-3 weeks"}</div>
+              </div>
+              <div style={{flex:"1 1 100px",padding:10,borderRadius:8,background:C.glass,textAlign:"center"}}>
+                <div style={{fontSize:10,color:C.muted,marginBottom:2}}>{lang==="de"?"Konfidenz":"Confidence"}</div>
+                <div style={{fontFamily:"JetBrains Mono,monospace",fontSize:18,fontWeight:700}}>{mlModel.brent.confidence}%</div>
+                <div style={{fontSize:10,color:C.dim}}>{mlModel.brent.optimalLag}d lag · r={mlModel.brent.optimalCorrelation}</div>
+              </div>
+            </div>
+            {mlModel.brent.asymmetry?.upLagDays!=null&&(
+              <div style={{fontSize:11,color:C.muted,display:"flex",gap:16,flexWrap:"wrap"}}>
+                <span>⚡ {lang==="de"?"Preiserhöhung":"Price increase"}: ~{mlModel.brent.asymmetry.upLagDays} {lang==="de"?"Tage":"days"}</span>
+                <span>🐌 {lang==="de"?"Preissenkung":"Price decrease"}: ~{mlModel.brent.asymmetry.downLagDays} {lang==="de"?"Tage":"days"}</span>
+              </div>
+            )}
+            {!mlModel.brent.asymmetry?.upLagDays&&(
+              <div style={{fontSize:11,color:C.dim}}>{lang==="de"?"Lag-Analyse braucht mehr Daten (7-14 Tage)...":"Lag analysis needs more data (7-14 days)..."}</div>
+            )}
+          </div>
+        )}
         <div style={s.card}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <div style={s.cardT}>{t("forecast14",lang)} — {fuel.toUpperCase()}</div>
