@@ -561,7 +561,7 @@ function TankRadar(){
   const [brentTs,setBrentTs]=useState(()=>S.get("brent_ts")||null);
   const [lastFetch,setLastFetch]=useState(null);
   const [theme,setTheme]=useState(()=>S.get("theme")||"dark");
-  const [lang,setLang]=useState(()=>{const saved=S.get("lang");if(saved)return saved;const bl=(navigator.language||navigator.userLanguage||"de").slice(0,2).toLowerCase();return["de","en","tr"].includes(bl)?bl:"de"});
+  const [lang,setLang]=useState(()=>{const saved=S.get("lang");const explicit=S.get("lang_explicit");if(saved&&explicit)return saved;const bl=(navigator.language||navigator.userLanguage||"de").slice(0,2).toLowerCase();const detected=["de","en","tr"].includes(bl)?bl:"de";S.set("lang",detected);return detected});
   const [loc,setLoc]=useState(()=>S.json("loc",{lat:52.4227,lng:10.7865,name:"Wolfsburg"}));
   const [rad,setRad]=useState(()=>parseInt(S.get("rad"))||25);
   const [locSearch,setLocSearch]=useState("");
@@ -640,7 +640,7 @@ function TankRadar(){
   },[]);
 
   const saveTheme=v=>{setTheme(v);S.set("theme",v)};
-  const saveLang=v=>{setLang(v);S.set("lang",v)};
+  const saveLang=v=>{setLang(v);S.set("lang",v);S.set("lang_explicit","1")};
   const saveRad=v=>{setRad(v);S.set("rad",String(v))};
   const saveFuel=v=>{setFuel(v);S.set("fuel",v)};
   const saveLoc=v=>{setLoc(v);S.set("loc",JSON.stringify(v))};
