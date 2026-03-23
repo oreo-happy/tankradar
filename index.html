@@ -54,7 +54,7 @@ input[type=number]::-webkit-inner-spin-button{opacity:1}
 .modal-overlay{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;animation:fadeUp .25s var(--ease)}
 .dark .modal-overlay{background:rgba(0,0,0,.8);backdrop-filter:blur(12px)}
 .light .modal-overlay{background:rgba(0,0,0,.4);backdrop-filter:blur(12px)}
-body.modal-open{overflow:hidden}
+body.modal-open{overflow:hidden;position:fixed;width:100%;touch-action:none}
 /* Focus */
 input:focus,button:focus-visible{outline:2px solid rgba(16,185,129,.5);outline-offset:2px}
 /* Selection */
@@ -66,10 +66,12 @@ input:focus,button:focus-visible{outline:2px solid rgba(16,185,129,.5);outline-o
 .fav-star:hover{transform:scale(1.3)}
 .fav-star:active{transform:scale(.9)}
 /* Bottom nav */
-.bottom-nav{position:fixed;bottom:0;left:0;right:0;z-index:100;display:flex;justify-content:space-around;padding:6px 0 env(safe-area-inset-bottom,6px);border-top:1px solid rgba(255,255,255,.06)}
+.bottom-nav{position:fixed;bottom:0;left:0;right:0;z-index:100;display:flex;justify-content:space-around;padding:8px 0 calc(8px + env(safe-area-inset-bottom,0px));border-top:1px solid rgba(255,255,255,.06)}
 .dark .bottom-nav{background:rgba(8,8,10,.92);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
 .light .bottom-nav{background:rgba(255,255,255,.92);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-top-color:rgba(0,0,0,.08)}
-.nav-item{display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px 12px;cursor:pointer;transition:color .2s;-webkit-tap-highlight-color:transparent;user-select:none;min-width:56px}
+.nav-item{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 0;cursor:pointer;transition:all .2s;-webkit-tap-highlight-color:transparent;user-select:none;flex:1;border-radius:8px}
+.nav-item:hover{background:rgba(255,255,255,.04)}
+.light .nav-item:hover{background:rgba(0,0,0,.04)}
 .nav-icon{font-size:20px;line-height:1}
 .nav-label{font-size:10px;font-weight:600;letter-spacing:.02em}
 /* Sub toggle */
@@ -641,7 +643,18 @@ function TankRadar(){
 
   // ─── EFFECTS ────────────────────────────────────────────────
   useEffect(()=>{document.body.classList.remove("dark","light");document.body.classList.add(theme)},[theme]);
-  useEffect(()=>{if(detailStation){document.body.classList.add("modal-open")}else{document.body.classList.remove("modal-open")}},[detailStation]);
+  useEffect(()=>{
+    if(detailStation){
+      const scrollY=window.scrollY;
+      document.body.style.top=`-${scrollY}px`;
+      document.body.classList.add("modal-open");
+    }else{
+      const top=parseInt(document.body.style.top||"0")*-1;
+      document.body.classList.remove("modal-open");
+      document.body.style.top="";
+      window.scrollTo(0,top);
+    }
+  },[detailStation]);
   useEffect(()=>{
     const h=e=>{e.preventDefault();setDeferredPrompt(e)};
     window.addEventListener("beforeinstallprompt",h);
@@ -1714,7 +1727,7 @@ function TankRadar(){
 
   // ─── SETTINGS ───────────────────────────────────────────────
   const renderSettings=()=>(
-    <div style={{display:"flex",flexDirection:"column",gap:12,maxWidth:500}}>
+    <div style={{display:"flex",flexDirection:"column",gap:12,maxWidth:500,margin:"0 auto"}}>
       {/* API Key */}
       <div style={s.card}>
         <div style={s.cardT}>{t("apiKey",lang)}</div>
@@ -2005,7 +2018,7 @@ function TankRadar(){
 
   // ─── RENDER ─────────────────────────────────────────────────
   return(
-    <div style={{minHeight:"100vh",paddingBottom:72}}>
+    <div style={{minHeight:"100vh",paddingBottom:90}}>
       <DetailModal/>
       {/* HEADER — compact */}
       <div style={s.header}>
