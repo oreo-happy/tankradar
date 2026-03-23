@@ -66,10 +66,10 @@ input:focus,button:focus-visible{outline:2px solid rgba(16,185,129,.5);outline-o
 .fav-star:hover{transform:scale(1.3)}
 .fav-star:active{transform:scale(.9)}
 /* Bottom nav */
-.bottom-nav{position:fixed;bottom:0;left:0;right:0;z-index:100;display:flex;justify-content:space-around;padding:10px 0 calc(12px + env(safe-area-inset-bottom,0px));border-top:1px solid rgba(255,255,255,.06)}
-.dark .bottom-nav{background:rgba(8,8,10,.92);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
-.light .bottom-nav{background:rgba(255,255,255,.92);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-top-color:rgba(0,0,0,.08)}
-.nav-item{display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 0 2px;cursor:pointer;transition:all .2s;-webkit-tap-highlight-color:transparent;user-select:none;flex:1;border-radius:8px}
+.bottom-nav{position:fixed;bottom:0;left:0;right:0;z-index:100;display:flex;justify-content:space-around;padding:12px 0 calc(16px + env(safe-area-inset-bottom,0px));border-top:1px solid rgba(255,255,255,.06)}
+.dark .bottom-nav{background:rgba(8,8,10,.95);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
+.light .bottom-nav{background:rgba(255,255,255,.95);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-top-color:rgba(0,0,0,.08)}
+.nav-item{display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 0 4px;cursor:pointer;transition:all .2s;-webkit-tap-highlight-color:transparent;user-select:none;flex:1;border-radius:8px}
 .nav-item:hover{background:rgba(255,255,255,.04)}
 .light .nav-item:hover{background:rgba(0,0,0,.04)}
 .nav-icon{font-size:20px;line-height:1}
@@ -992,7 +992,7 @@ function TankRadar(){
 
   // ─── MAP EFFECT ─────────────────────────────────────────────
   useEffect(()=>{
-    if(tab!=="map"||!mapRef.current||!L)return;
+    if(!(tab==="prices"&&subView==="map")||!mapRef.current||!L)return;
     if(!mapInst.current){
       mapInst.current=L.map(mapRef.current,{zoomControl:true}).setView([loc.lat,loc.lng],11);
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{attribution:'© OSM',maxZoom:18}).addTo(mapInst.current);
@@ -1020,12 +1020,12 @@ function TankRadar(){
       markersRef.current.push(m);
     });
     setTimeout(()=>mapInst.current?.invalidateSize(),100);
-  },[tab,stations,demo,loc,rad,theme,cheapest]);
+  },[tab,subView,stations,demo,loc,rad,theme,cheapest]);
 
   // Cleanup map on unmount from tab
   useEffect(()=>{
-    if(tab!=="map"&&mapInst.current){mapInst.current.remove();mapInst.current=null;markersRef.current=[]}
-  },[tab]);
+    if(!(tab==="prices"&&subView==="map")&&mapInst.current){mapInst.current.remove();mapInst.current=null;markersRef.current=[]}
+  },[tab,subView]);
 
   // ─── STYLES ─────────────────────────────────────────────────
   const s={
@@ -1328,21 +1328,32 @@ function TankRadar(){
   // ─── MAP ────────────────────────────────────────────────────
   const renderMap=()=>(
     <div style={{display:"flex",flexDirection:"column",gap:12}}>
-      <div ref={mapRef} style={{height:480,borderRadius:12,border:`1px solid ${C.border}`}}/>
+      <div ref={mapRef} style={{height:"min(480px, 60vh)",borderRadius:12,border:`1px solid ${C.border}`}}/>
       <div style={{color:C.muted,fontSize:11,textAlign:"center"}}>{validStations.length} {t("stations",lang)} · {loc.name} · {rad} km</div>
     </div>
   );
 
   // ─── PATTERNS ───────────────────────────────────────────────
   // ─── HEATMAP DATA ──────────────────────────────────────────
+  const TIME_BLOCKS=[
+    {id:0,hours:[0,1,2],label:{de:"Nacht",en:"Night",tr:"Gece"},short:"00–02"},
+    {id:1,hours:[3,4,5],label:{de:"Früh",en:"Early",tr:"Erken"},short:"03–05"},
+    {id:2,hours:[6,7,8],label:{de:"Morgens",en:"Morning",tr:"Sabah"},short:"06–08"},
+    {id:3,hours:[9,10,11],label:{de:"Vormittag",en:"Late AM",tr:"Öğleden Ö."},short:"09–11"},
+    {id:4,hours:[12,13,14],label:{de:"Mittag",en:"Midday",tr:"Öğle"},short:"12–14"},
+    {id:5,hours:[15,16,17],label:{de:"Nachmittag",en:"Afternoon",tr:"Öğleden S."},short:"15–17"},
+    {id:6,hours:[18,19,20],label:{de:"Abends",en:"Evening",tr:"Akşam"},short:"18–20"},
+    {id:7,hours:[21,22,23],label:{de:"Spät",en:"Late",tr:"Geç"},short:"21–23"},
+  ];
   const heatmapData=useMemo(()=>{
     const hDeltas=isMLActive?mlHourly:HOURLY_DELTA;
     const dDeltas=isMLActive?mlDaily:DAILY_DELTA;
     const cells=[];
     for(let d=0;d<7;d++){
-      for(let h=0;h<24;h++){
-        const val=+(hDeltas[h]||0)+ +(dDeltas[d]||0);
-        cells.push({day:d,hour:h,val});
+      for(const blk of TIME_BLOCKS){
+        const avg=blk.hours.reduce((a,h)=>a+(+(hDeltas[h]||0)),0)/blk.hours.length;
+        const val=+(avg+(+(dDeltas[d]||0))).toFixed(1);
+        cells.push({day:d,block:blk.id,hours:blk.hours,val});
       }
     }
     return cells;
@@ -1365,92 +1376,91 @@ function TankRadar(){
     return norm<0.5?(theme==="dark"?"#86efac":"#166534"):(theme==="dark"?"#fca5a5":"#991b1b");
   };
   const [selectedCell,setSelectedCell]=useState(null);
-  // Rank all 168 cells
   const rankedCells=useMemo(()=>[...heatmapData].sort((a,b)=>a.val-b.val),[heatmapData]);
 
   const renderPatterns=()=>(
     <div style={{display:"flex",flexDirection:"column",gap:12}}>
       {/* HEATMAP */}
       <div style={s.card}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
           <div style={s.cardT}>{lang==="de"?"Preis-Heatmap":lang==="tr"?"Fiyat Haritası":"Price Heatmap"}</div>
-          {isMLActive&&<span style={{...s.badge(C.green),fontSize:9}}>🧠 ML · {mlModel.stations_trained} Stationen</span>}
+          {isMLActive&&<span style={{...s.badge(C.green),fontSize:9}}>🧠 ML</span>}
         </div>
         {/* Selected cell detail */}
         {selectedCell!==null&&(()=>{
-          const cell=heatmapData.find(c=>c.day===selectedCell.d&&c.hour===selectedCell.h);
+          const cell=heatmapData.find(c=>c.day===selectedCell.d&&c.block===selectedCell.b);
           if(!cell)return null;
-          const rank=rankedCells.findIndex(c=>c.day===cell.day&&c.hour===cell.hour)+1;
+          const rank=rankedCells.findIndex(c=>c.day===cell.day&&c.block===cell.block)+1;
           const base=currentAvg||1.629;
           const estPrice=+(base+cell.val/100).toFixed(3);
-          const isGood=rank<=25;const isBad=rank>143;
+          const isGood=rank<=8;const isBad=rank>48;
+          const blk=TIME_BLOCKS[cell.block];
           return(
-            <div style={{display:"flex",gap:12,padding:12,borderRadius:8,background:C.bg,marginBottom:12,alignItems:"center",flexWrap:"wrap"}}>
-              <div style={{width:48,height:48,borderRadius:10,background:heatColor(cell.val),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                <span style={{fontSize:20}}>{isGood?"🟢":isBad?"🔴":"🟡"}</span>
+            <div className="fade-up" style={{display:"flex",gap:10,padding:12,borderRadius:10,background:C.glass,border:`1px solid ${C.glassBorder}`,marginBottom:10,alignItems:"center",flexWrap:"wrap"}}>
+              <div style={{width:42,height:42,borderRadius:10,background:heatColor(cell.val),display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                <span style={{fontSize:18}}>{isGood?"🟢":isBad?"🔴":"🟡"}</span>
               </div>
-              <div style={{flex:1,minWidth:150}}>
-                <div style={{fontWeight:700,fontSize:14}}>{df[cell.day]}, {String(cell.hour).padStart(2,"0")}:00–{String(cell.hour+1).padStart(2,"0")}:00</div>
-                <div style={{color:C.muted,fontSize:12,marginTop:2}}>
-                  {cell.val>0?"+":""}{cell.val.toFixed(1)} ct/L {lang==="de"?"vs. Durchschnitt":"vs. average"} · Rang {rank}/168
+              <div style={{flex:1,minWidth:120}}>
+                <div style={{fontWeight:700,fontSize:13}}>{df[cell.day]}, {blk.short}</div>
+                <div style={{color:C.muted,fontSize:11,marginTop:2}}>
+                  {cell.val>0?"+":""}{cell.val} ct/L · #{rank}/{heatmapData.length}
                 </div>
               </div>
               <div style={{textAlign:"right"}}>
-                <div style={{fontFamily:"JetBrains Mono,monospace",fontSize:20,fontWeight:700,color:heatTextColor(cell.val)}}>~{fmt(estPrice)} €</div>
-                <div style={{fontSize:10,color:C.muted}}>{lang==="de"?"geschätzt":"estimated"}</div>
+                <div style={{fontFamily:"JetBrains Mono,monospace",fontSize:18,fontWeight:700,color:heatTextColor(cell.val)}}>~{fmt(estPrice)} €</div>
+                <div style={{fontSize:9,color:C.muted}}>{lang==="de"?"geschätzt":"est."}</div>
               </div>
             </div>
           );
         })()}
-        {/* Grid */}
-        <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
-          <table style={{borderCollapse:"separate",borderSpacing:2,minWidth:560,width:"100%",tableLayout:"fixed"}}>
-            <thead>
-              <tr>
-                <td style={{width:40}}/>
-                {Array.from({length:24},(_,h)=>(
-                  <td key={h} style={{textAlign:"center",fontSize:9,color:C.muted,fontFamily:"monospace",padding:"0 0 4px",fontWeight:h%6===0?700:400}}>
-                    {h%2===0?String(h).padStart(2,"0"):""}
-                  </td>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {Array.from({length:7},(_,d)=>(
-                <tr key={d} style={{height:28}}>
-                  <td style={{fontSize:11,fontWeight:600,color:C.muted,textAlign:"right",paddingRight:6,whiteSpace:"nowrap"}}>{dn[d]}</td>
-                  {Array.from({length:24},(__,h)=>{
-                    const cell=heatmapData.find(c=>c.day===d&&c.hour===h);
-                    const val=cell?.val||0;
-                    const bg=heatColor(val);
-                    const isSelected=selectedCell?.d===d&&selectedCell?.h===h;
-                    const rank=rankedCells.findIndex(c=>c.day===d&&c.hour===h)+1;
-                    const isTop5=rank<=5;
-                    return(
-                      <td key={h} onClick={()=>setSelectedCell(isSelected?null:{d,h})}
-                        style={{background:bg,borderRadius:4,cursor:"pointer",textAlign:"center",verticalAlign:"middle",
-                          outline:isSelected?`2px solid ${C.green}`:"none",outlineOffset:-1,
-                          transition:"all .15s",padding:0}}>
-                        {isTop5&&<span style={{fontSize:10,color:"#fff",textShadow:"0 0 4px rgba(0,0,0,.6)",lineHeight:1}}>★</span>}
-                      </td>
-                    );
-                  })}
-                </tr>
+        {/* Grid — 8 columns, no horizontal scroll */}
+        <table style={{borderCollapse:"separate",borderSpacing:3,width:"100%",tableLayout:"fixed"}}>
+          <thead>
+            <tr>
+              <td style={{width:36}}/>
+              {TIME_BLOCKS.map(blk=>(
+                <td key={blk.id} style={{textAlign:"center",fontSize:9,color:C.muted,padding:"0 0 6px",fontWeight:600}}>{blk.short}</td>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </tr>
+          </thead>
+          <tbody>
+            {Array.from({length:7},(_,d)=>(
+              <tr key={d}>
+                <td style={{fontSize:11,fontWeight:600,color:C.muted,textAlign:"right",paddingRight:4,whiteSpace:"nowrap"}}>{dn[d]}</td>
+                {TIME_BLOCKS.map(blk=>{
+                  const cell=heatmapData.find(c=>c.day===d&&c.block===blk.id);
+                  const val=cell?.val||0;
+                  const bg=heatColor(val);
+                  const isSelected=selectedCell?.d===d&&selectedCell?.b===blk.id;
+                  const rank=rankedCells.findIndex(c=>c.day===d&&c.block===blk.id)+1;
+                  const isTop3=rank<=3;
+                  return(
+                    <td key={blk.id} onClick={()=>setSelectedCell(isSelected?null:{d,b:blk.id})}
+                      style={{background:bg,borderRadius:6,height:36,cursor:"pointer",textAlign:"center",verticalAlign:"middle",
+                        outline:isSelected?`2px solid ${C.green}`:"none",outlineOffset:-1,
+                        transition:"all .15s",padding:0,position:"relative"}}>
+                      <div style={{fontSize:10,fontWeight:700,color:heatTextColor(val),lineHeight:1}}>
+                        {val>0?"+":""}{val}
+                      </div>
+                      {isTop3&&<div style={{position:"absolute",top:1,right:2,fontSize:7,color:"#fff",textShadow:"0 0 3px rgba(0,0,0,.5)"}}>★</div>}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
         {/* Legend */}
         <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,marginTop:10,flexWrap:"wrap"}}>
           <span style={{fontSize:10,color:C.green,fontWeight:600}}>{lang==="de"?"günstig":"cheap"}</span>
           <div style={{display:"flex",gap:1}}>
-            {Array.from({length:8},(_, i)=>{
+            {Array.from({length:8},(_,i)=>{
               const v=heatMin+(heatMax-heatMin)*(i/7);
-              return <div key={i} style={{width:16,height:8,borderRadius:1,background:heatColor(v)}}/>;
+              return <div key={i} style={{width:14,height:8,borderRadius:2,background:heatColor(v)}}/>;
             })}
           </div>
           <span style={{fontSize:10,color:C.red,fontWeight:600}}>{lang==="de"?"teuer":"expensive"}</span>
-          <span style={{fontSize:9,color:C.dim,marginLeft:6}}>★ Top 5 · {lang==="de"?"Tippe für Details":"Tap for details"}</span>
+          <span style={{fontSize:9,color:C.dim,marginLeft:4}}>★ Top 3</span>
         </div>
       </div>
       {/* Existing charts */}
@@ -2018,7 +2028,7 @@ function TankRadar(){
 
   // ─── RENDER ─────────────────────────────────────────────────
   return(
-    <div style={{minHeight:"100vh",paddingBottom:100}}>
+    <div style={{minHeight:"100vh",paddingBottom:110}}>
       <DetailModal/>
       {/* HEADER — compact */}
       <div style={s.header}>
