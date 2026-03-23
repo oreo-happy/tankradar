@@ -1391,10 +1391,10 @@ function TankRadar(){
         })()}
         {/* Grid */}
         <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
-          <table style={{borderCollapse:"separate",borderSpacing:2,minWidth:560,width:"100%"}}>
+          <table style={{borderCollapse:"separate",borderSpacing:2,minWidth:560,width:"100%",tableLayout:"fixed"}}>
             <thead>
               <tr>
-                <td style={{width:36}}/>
+                <td style={{width:40}}/>
                 {Array.from({length:24},(_,h)=>(
                   <td key={h} style={{textAlign:"center",fontSize:9,color:C.muted,fontFamily:"monospace",padding:"0 0 4px",fontWeight:h%6===0?700:400}}>
                     {h%2===0?String(h).padStart(2,"0"):""}
@@ -1404,7 +1404,7 @@ function TankRadar(){
             </thead>
             <tbody>
               {Array.from({length:7},(_,d)=>(
-                <tr key={d}>
+                <tr key={d} style={{height:28}}>
                   <td style={{fontSize:11,fontWeight:600,color:C.muted,textAlign:"right",paddingRight:6,whiteSpace:"nowrap"}}>{dn[d]}</td>
                   {Array.from({length:24},(__,h)=>{
                     const cell=heatmapData.find(c=>c.day===d&&c.hour===h);
@@ -1415,10 +1415,10 @@ function TankRadar(){
                     const isTop5=rank<=5;
                     return(
                       <td key={h} onClick={()=>setSelectedCell(isSelected?null:{d,h})}
-                        style={{background:bg,borderRadius:3,height:24,cursor:"pointer",position:"relative",
-                          outline:isSelected?`2px solid ${C.amber}`:"none",outlineOffset:-1,
-                          transition:"all .15s"}}>
-                        {isTop5&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,fontWeight:800,color:theme==="dark"?"#fff":"#000",textShadow:"0 0 3px rgba(0,0,0,.3)"}}>★</div>}
+                        style={{background:bg,borderRadius:4,cursor:"pointer",textAlign:"center",verticalAlign:"middle",
+                          outline:isSelected?`2px solid ${C.green}`:"none",outlineOffset:-1,
+                          transition:"all .15s",padding:0}}>
+                        {isTop5&&<span style={{fontSize:10,color:"#fff",textShadow:"0 0 4px rgba(0,0,0,.6)",lineHeight:1}}>★</span>}
                       </td>
                     );
                   })}
