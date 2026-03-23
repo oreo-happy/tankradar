@@ -1171,10 +1171,43 @@ function TankRadar(){
   };
 
   // ─── DASHBOARD ──────────────────────────────────────────────
+  // ─── HINT SYSTEM ─────────────────────────────────────────────
+  const APP_VERSION="2.6";
+  const [dismissedHints,setDismissedHints]=useState(()=>S.json("hints_dismissed",[]));
+  const [versionSeen,setVersionSeen]=useState(()=>S.get("version_seen")||"");
+  const dismissHint=(id)=>{const next=[...dismissedHints,id];setDismissedHints(next);S.set("hints_dismissed",JSON.stringify(next))};
+  const dismissVersion=()=>{setVersionSeen(APP_VERSION);S.set("version_seen",APP_VERSION)};
+  const Hint=({id,emoji,children})=>{
+    if(dismissedHints.includes(id))return null;
+    return(
+      <div className="fade-up" style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",borderRadius:10,background:C.glass,border:`1px solid ${C.glassBorder}`,marginBottom:8,fontSize:12,color:C.muted}}>
+        <span style={{fontSize:16,flexShrink:0}}>{emoji}</span>
+        <div style={{flex:1,lineHeight:1.4}}>{children}</div>
+        <div onClick={()=>dismissHint(id)} style={{cursor:"pointer",color:C.dim,fontSize:11,flexShrink:0,padding:"2px 6px",borderRadius:6,background:C.glass}}>OK</div>
+      </div>
+    );
+  };
+  const VersionBanner=()=>{
+    if(versionSeen===APP_VERSION)return null;
+    return(
+      <div className="fade-up" style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",borderRadius:12,background:C.greenGlow,border:`1px solid ${C.green}`,marginBottom:10}}>
+        <span style={{fontSize:14}}>🆕</span>
+        <div style={{flex:1}}>
+          <div style={{fontWeight:700,fontSize:13}}>v{APP_VERSION}</div>
+          <div style={{fontSize:11,color:C.muted,marginTop:1}}>{lang==="de"?"Telegram-Alarme · Favoriten · Heatmap · Brent-Prognose · Auto-Erkennung":"Telegram alerts · Favorites · Heatmap · Brent forecast · Auto-detect"}</div>
+        </div>
+        <div onClick={dismissVersion} style={{cursor:"pointer",color:C.green,fontSize:11,flexShrink:0,padding:"4px 8px",borderRadius:6,background:C.glass}}>✕</div>
+      </div>
+    );
+  };
+
   const renderDashboard=()=>(
     <div style={{display:"flex",flexDirection:"column",gap:12}}>
       {demo&&<div style={{...s.card,background:C.amberGlow,borderColor:C.amber}}><strong>⚠ {t("demo",lang)}</strong><div style={{color:C.muted,fontSize:12,marginTop:4}}>{t("demoDesc",lang)}</div></div>}
       {error&&<div style={{...s.card,background:"rgba(244,63,94,.06)",borderColor:C.red,color:C.red,fontSize:13}}>{error}</div>}
+      <VersionBanner/>
+      <Hint id="home_fav" emoji="⭐">{lang==="de"?"Tippe ☆ bei einer Tankstelle um sie als Favorit zu pinnen. Favoriten erscheinen oben.":"Tap ☆ on any station to pin it as favorite. Favorites appear at the top."}</Hint>
+      <Hint id="home_badge" emoji="📊">{lang==="de"?"Farbige Badges zeigen ob eine Station über oder unter dem Durchschnitt liegt.":"Colored badges show if a station is above or below average."}</Hint>
       <div style={s.grid}>
         <div style={s.card}>
           <div style={s.cardT}>{t("cheapest",lang)} · {fuel.toUpperCase()}</div>
@@ -1291,7 +1324,10 @@ function TankRadar(){
 
   // ─── STATIONS ───────────────────────────────────────────────
   const renderStations=()=>(
-    <div style={s.card}>
+    <div>
+      <Hint id="prices_cards" emoji="💳">{lang==="de"?"Rabattkarten in ⚙ aktivieren — Preise werden automatisch neu sortiert.":"Activate discount cards in ⚙ — prices re-sort automatically."}</Hint>
+      <Hint id="prices_tap" emoji="ℹ️">{lang==="de"?"Tippe eine Station für Öffnungszeiten, alle Kraftstoffe und 7-Tage-Verlauf.":"Tap any station for hours, all fuels, and 7-day price history."}</Hint>
+      <div style={s.card}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
         <div style={s.cardT}>{t("allStations",lang)} · {fuel.toUpperCase()} · {rad} km</div>
         {!demo&&<button onClick={fetchStations} style={s.btnM}>{loading?t("loading",lang):t("refresh",lang)}</button>}
@@ -1322,6 +1358,7 @@ function TankRadar(){
           </div>
         </div>
       )})}
+    </div>
     </div>
   );
 
@@ -1380,6 +1417,7 @@ function TankRadar(){
 
   const renderPatterns=()=>(
     <div style={{display:"flex",flexDirection:"column",gap:12}}>
+      <Hint id="heatmap_tap" emoji="🗓">{lang==="de"?"Grün = günstig, Rot = teuer. Tippe eine Zelle für geschätzten Preis.":"Green = cheap, Red = expensive. Tap any cell for estimated price."}</Hint>
       {/* HEATMAP */}
       <div style={s.card}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
@@ -1506,6 +1544,8 @@ function TankRadar(){
     const fn=tb<=mw+.005;
     return(
       <div style={{display:"flex",flexDirection:"column",gap:12}}>
+        <Hint id="fc_ml" emoji="🧠">{lang==="de"?`Prognosen basieren auf echten Daten von ${mlModel?.stations_trained||77} Stationen — keine Schätzungen.`:`Forecasts use real data from ${mlModel?.stations_trained||77} stations — not estimates.`}</Hint>
+        <Hint id="fc_brent" emoji="🛢">{lang==="de"?"Ölpreise steigen schnell an der Zapfsäule, fallen aber langsam. Wir tracken beide Verzögerungen.":"Oil prices rise fast at the pump but drop slowly. We track both lags."}</Hint>
         <div style={{...s.card,borderColor:fn?C.green:C.blue,background:fn?"rgba(16,185,129,.04)":"rgba(59,130,246,.04)"}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <div style={{width:40,height:40,borderRadius:10,background:fn?C.green:C.blue,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>{fn?"✓":"⏳"}</div>
@@ -1738,6 +1778,8 @@ function TankRadar(){
   // ─── SETTINGS ───────────────────────────────────────────────
   const renderSettings=()=>(
     <div style={{display:"flex",flexDirection:"column",gap:12,maxWidth:500,margin:"0 auto"}}>
+      <Hint id="set_telegram" emoji="🔔">{lang==="de"?"Verbinde Telegram für sofortige Alarme wenn Preise unter dein Ziel fallen.":"Connect Telegram for instant alerts when prices drop below your target."}</Hint>
+      <Hint id="set_car" emoji="🚗">{lang==="de"?"Suche dein Auto — Tankgröße und Verbrauch werden automatisch ausgefüllt.":"Search your car — tank size and consumption are filled automatically."}</Hint>
       {/* API Key */}
       <div style={s.card}>
         <div style={s.cardT}>{t("apiKey",lang)}</div>
@@ -2057,6 +2099,7 @@ function TankRadar(){
         )}
         {tab==="tracker"&&(
           <div style={{display:"flex",flexDirection:"column",gap:12}}>
+            <Hint id="tracker_gps" emoji="📍">{lang==="de"?"Tippe 'Ich habe getankt' — die Station wird automatisch per GPS erkannt.":"Tap 'I filled up' — the station is auto-detected via GPS."}</Hint>
             {/* Quick fill-up button */}
             {!showLogForm?(
               <div style={{...s.card,textAlign:"center",padding:20}} onClick={()=>{setShowLogForm(true);geoLocateStation()}}>
