@@ -65,6 +65,15 @@ input:focus,button:focus-visible{outline:2px solid rgba(16,185,129,.5);outline-o
 .fav-star{cursor:pointer;transition:transform .2s var(--ease),color .2s;font-size:16px;user-select:none}
 .fav-star:hover{transform:scale(1.3)}
 .fav-star:active{transform:scale(.9)}
+/* Bottom nav */
+.bottom-nav{position:fixed;bottom:0;left:0;right:0;z-index:100;display:flex;justify-content:space-around;padding:6px 0 env(safe-area-inset-bottom,6px);border-top:1px solid rgba(255,255,255,.06)}
+.dark .bottom-nav{background:rgba(8,8,10,.92);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
+.light .bottom-nav{background:rgba(255,255,255,.92);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-top-color:rgba(0,0,0,.08)}
+.nav-item{display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px 12px;cursor:pointer;transition:color .2s;-webkit-tap-highlight-color:transparent;user-select:none;min-width:56px}
+.nav-icon{font-size:20px;line-height:1}
+.nav-label{font-size:10px;font-weight:600;letter-spacing:.02em}
+/* Sub toggle */
+.sub-toggle{display:flex;gap:2px;padding:2px;border-radius:10px;margin-bottom:12px}
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
@@ -552,7 +561,7 @@ function TankRadar(){
   const [keyInput,setKeyInput]=useState("");
   const [stations,setStations]=useState([]);
   const [fuel,setFuel]=useState(()=>S.get("fuel")||"e10");
-  const [tab,setTab]=useState("dashboard");
+  const [tab,setTab]=useState("home");
   const [loading,setLoading]=useState(false);
   const [error,setError]=useState(null);
   const [demo,setDemo]=useState(false);
@@ -1007,7 +1016,7 @@ function TankRadar(){
 
   // ─── STYLES ─────────────────────────────────────────────────
   const s={
-    header:{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",borderBottom:`1px solid ${C.border}`,flexWrap:"wrap",gap:8,background:theme==="dark"?"rgba(8,8,10,.9)":"rgba(255,255,255,.85)",backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)",position:"sticky",top:0,zIndex:100},
+    header:{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",borderBottom:`1px solid ${C.border}`,flexWrap:"wrap",gap:8,background:theme==="dark"?"rgba(8,8,10,.95)":"rgba(255,255,255,.9)",backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)"},
     logo:{display:"flex",alignItems:"center",gap:8},
     logoIcon:{width:30,height:30,borderRadius:8,background:`linear-gradient(135deg,${C.green},#059669)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,boxShadow:`0 0 12px ${C.greenGlow}`},
     pills:{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"},
@@ -1028,9 +1037,13 @@ function TankRadar(){
   };
 
   const TABS=[
-    {id:"dashboard",icon:"📊"},{id:"stations",icon:"⛽"},{id:"map",icon:"🗺"},
-    {id:"patterns",icon:"📈"},{id:"forecast",icon:"🔮"},{id:"tracker",icon:"📒"},{id:"history",icon:"📉"},{id:"settings",icon:"⚙"},
+    {id:"home",icon:"🏠",label:{de:"Home",en:"Home",tr:"Ana Sayfa"}},
+    {id:"prices",icon:"⛽",label:{de:"Preise",en:"Prices",tr:"Fiyatlar"}},
+    {id:"forecast",icon:"🔮",label:{de:"Prognose",en:"Forecast",tr:"Tahmin"}},
+    {id:"tracker",icon:"📒",label:{de:"Tankbuch",en:"Log",tr:"Günlük"}},
+    {id:"settings",icon:"⚙",label:{de:"Mehr",en:"More",tr:"Daha"}},
   ];
+  const [subView,setSubView]=useState("list"); // for prices: list/map; for forecast: forecast/patterns
 
   const daysLabel=(d,startDate)=>{
     const dateStr=startDate?fmtDate(startDate):"";
@@ -1946,30 +1959,171 @@ function TankRadar(){
     </div>
   );
 
+  // ─── SUB TOGGLE ──────────────────────────────────────────────
+  const SubToggle=({options,value,onChange})=>(
+    <div className="sub-toggle" style={{background:C.glass,border:`1px solid ${C.border}`}}>
+      {options.map(o=>(
+        <div key={o.id} onClick={()=>onChange(o.id)} style={{padding:"6px 14px",borderRadius:8,fontSize:12,fontWeight:value===o.id?700:400,cursor:"pointer",background:value===o.id?C.green:"transparent",color:value===o.id?"#000":C.muted,transition:"all .2s var(--ease)",flex:1,textAlign:"center"}}>{o.label}</div>
+      ))}
+    </div>
+  );
+
+  // ─── SMART FILL-UP FLOW ─────────────────────────────────────
+  const [quickFuel,setQuickFuel]=useState(fuel);
+  const [quickLiters,setQuickLiters]=useState("");
+  const [quickStation,setQuickStation]=useState(null);
+  const [geoLocating,setGeoLocating]=useState(false);
+
+  const geoLocateStation=()=>{
+    if(!navigator.geolocation)return;
+    setGeoLocating(true);
+    navigator.geolocation.getCurrentPosition(pos=>{
+      const lat=pos.coords.latitude,lng=pos.coords.longitude;
+      // Find closest open station from current data
+      let closest=null,minDist=Infinity;
+      for(const st of active){
+        if(!st.lat||!st.lng||!st.isOpen)continue;
+        const d=Math.sqrt(Math.pow(st.lat-lat,2)+Math.pow(st.lng-lng,2));
+        if(d<minDist){minDist=d;closest=st}
+      }
+      if(closest){setQuickStation(closest);const p=closest[quickFuel]||closest.price;if(p&&typeof p==="number")setLogPrice(String(p))}
+      setGeoLocating(false);
+    },()=>setGeoLocating(false));
+  };
+
+  const quickLogFillup=()=>{
+    const l=parseFloat(quickLiters);
+    const p=quickStation?parseFloat(quickStation[quickFuel]||quickStation.price):parseFloat(logPrice);
+    if(!l||!p)return;
+    const entry={id:Date.now(),ts:Date.now(),liters:l,pricePerL:p,total:+(l*p).toFixed(2),station:quickStation?.brand||quickStation?.name||"—",fuel:quickFuel};
+    const updated=[entry,...fillups].slice(0,200);
+    setFillups(updated);S.set("fillups",JSON.stringify(updated));
+    setQuickLiters("");setQuickStation(null);setShowLogForm(false);
+    const newLevel=Math.min(100,currentFuel+(l/tankSize)*100);
+    saveCurrentFuel(newLevel);
+  };
+
   // ─── RENDER ─────────────────────────────────────────────────
   return(
-    <div style={{minHeight:"100vh"}}>
+    <div style={{minHeight:"100vh",paddingBottom:72}}>
       <DetailModal/>
+      {/* HEADER — compact */}
       <div style={s.header}>
         <div style={s.logo}>
           <div style={s.logoIcon}>⛽</div>
-          <div><div style={{fontSize:16,fontWeight:700,letterSpacing:"-.02em"}}>TankRadar</div><div style={{fontSize:10,color:C.muted}}>{loc.name?.split(",")[0]} · {rad} km</div></div>
+          <div><div style={{fontSize:15,fontWeight:800,letterSpacing:"-.02em"}}>TankRadar</div></div>
         </div>
         <div style={s.pills}>
           {["e10","e5","diesel"].map(f=><div key={f} style={s.pill(fuel===f)} onClick={()=>saveFuel(f)}>{f==="diesel"?"Diesel":f.toUpperCase()}</div>)}
-          {!demo&&<span style={{fontSize:10,color:C.dim,fontFamily:"monospace",marginLeft:4}}>{loading?"…":lastFetch?lastFetch.toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"}):""}</span>}
         </div>
       </div>
-      <div style={s.tabs}>{TABS.map(tb=><div key={tb.id} style={s.tab(tab===tb.id)} onClick={()=>setTab(tb.id)}>{tb.icon} {t(tb.id,lang)}</div>)}</div>
-      <div style={s.content}>
-        {tab==="dashboard"&&renderDashboard()}
-        {tab==="stations"&&renderStations()}
-        {tab==="map"&&renderMap()}
-        {tab==="patterns"&&renderPatterns()}
-        {tab==="forecast"&&renderForecast()}
-        {tab==="tracker"&&renderTracker()}
-        {tab==="history"&&renderHistory()}
+      {/* CONTENT */}
+      <div style={{...s.content,paddingTop:8}}>
+        {tab==="home"&&renderDashboard()}
+        {tab==="prices"&&(
+          <div>
+            <SubToggle options={[{id:"list",label:lang==="de"?"Liste":"List"},{id:"map",label:lang==="de"?"Karte":"Map"}]} value={subView} onChange={setSubView}/>
+            {subView==="list"?renderStations():renderMap()}
+          </div>
+        )}
+        {tab==="forecast"&&(
+          <div>
+            <SubToggle options={[{id:"forecast",label:lang==="de"?"Prognose":"Forecast"},{id:"patterns",label:lang==="de"?"Muster":"Patterns"},{id:"history",label:lang==="de"?"Verlauf":"History"}]} value={subView} onChange={setSubView}/>
+            {subView==="forecast"?renderForecast():subView==="patterns"?renderPatterns():renderHistory()}
+          </div>
+        )}
+        {tab==="tracker"&&(
+          <div style={{display:"flex",flexDirection:"column",gap:12}}>
+            {/* Quick fill-up button */}
+            {!showLogForm?(
+              <div style={{...s.card,textAlign:"center",padding:20}} onClick={()=>{setShowLogForm(true);geoLocateStation()}}>
+                <div style={{fontSize:32,marginBottom:8}}>⛽</div>
+                <div style={{fontWeight:700,fontSize:16}}>{lang==="de"?"Ich habe getankt":"I filled up"}</div>
+                <div style={{color:C.muted,fontSize:12,marginTop:4}}>{lang==="de"?"Tippen um Tankvorgang zu erfassen":"Tap to log fill-up"}</div>
+              </div>
+            ):(
+              <div style={s.card} className="fade-up">
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                  <div style={{fontWeight:700,fontSize:14}}>{lang==="de"?"Tankvorgang":"Fill-up"}</div>
+                  <div style={{cursor:"pointer",color:C.muted,fontSize:18}} onClick={()=>{setShowLogForm(false);setQuickStation(null)}}>✕</div>
+                </div>
+                {/* Station auto-detect */}
+                {geoLocating&&<div className="pulsing" style={{color:C.muted,fontSize:12,marginBottom:8}}>📍 {lang==="de"?"Tankstelle wird erkannt...":"Detecting station..."}</div>}
+                {quickStation&&(
+                  <div style={{display:"flex",alignItems:"center",gap:8,padding:10,borderRadius:8,background:C.greenGlow,border:`1px solid ${C.green}`,marginBottom:12}}>
+                    {(()=>{const bb=brandBadge(quickStation.brand,24);return bb?<div style={bb}>{BRANDS[quickStation.brand]?.short}</div>:null})()}
+                    <div style={{flex:1}}>
+                      <div style={{fontWeight:600,fontSize:13}}>{quickStation.brand} {quickStation.name}</div>
+                      <div style={{color:C.muted,fontSize:11}}>{quickStation.place} · {fmt(quickStation[quickFuel]||quickStation.price)} €/L</div>
+                    </div>
+                    <span style={{color:C.green,fontSize:14}}>✓</span>
+                  </div>
+                )}
+                {!quickStation&&!geoLocating&&(
+                  <button onClick={geoLocateStation} style={{...s.btnM,width:"100%",marginBottom:12}}>📍 {lang==="de"?"Tankstelle erkennen":"Detect station"}</button>
+                )}
+                {/* Fuel type */}
+                <div style={{marginBottom:12}}>
+                  <div style={{fontSize:11,color:C.muted,marginBottom:4}}>{lang==="de"?"Kraftstoff":"Fuel"}</div>
+                  <div style={{display:"flex",gap:4}}>
+                    {["e10","e5","diesel"].map(f=><div key={f} style={s.pill(quickFuel===f)} onClick={()=>setQuickFuel(f)}>{f==="diesel"?"Diesel":f.toUpperCase()}</div>)}
+                  </div>
+                </div>
+                {/* Liters only */}
+                <div style={{marginBottom:12}}>
+                  <div style={{fontSize:11,color:C.muted,marginBottom:4}}>{lang==="de"?"Liter":"Liters"}</div>
+                  <input type="number" step="0.1" value={quickLiters} onChange={e=>setQuickLiters(e.target.value)} placeholder="45.0" style={{...s.input,fontFamily:"monospace",fontSize:20,fontWeight:700,textAlign:"center",padding:12}} autoFocus/>
+                </div>
+                <button onClick={quickLogFillup} disabled={!quickLiters} style={{...s.btn,width:"100%",padding:12,fontSize:14,opacity:quickLiters?1:.5}}>💾 {lang==="de"?"Speichern":"Save"}</button>
+              </div>
+            )}
+            {/* Monthly summary */}
+            <div style={s.grid}>
+              <div style={s.card}>
+                <div style={s.cardT}>{t("thisMonth",lang)}</div>
+                <div style={{...s.big,fontSize:24,color:C.amber}}>{fillupStats.thisMonth.toFixed(2)} €</div>
+                <div style={{color:C.muted,fontSize:11}}>{fillupStats.litersThis} L · {fillupStats.count}x</div>
+              </div>
+              <div style={s.card}>
+                <div style={s.cardT}>{t("savedVsAvg",lang)}</div>
+                <div style={{...s.big,fontSize:24,color:fillupStats.savedVsAvg>=0?C.green:C.red}}>{fillupStats.savedVsAvg>=0?"+":""}{fillupStats.savedVsAvg.toFixed(2)} €</div>
+              </div>
+            </div>
+            {/* Fill-up list */}
+            {fillups.length>0&&(
+              <div style={s.card}>
+                <div style={s.cardT}>{t("tracker",lang)}</div>
+                {fillups.slice(0,15).map((f,i)=>(
+                  <div key={f.id} style={{...s.row,gap:8}}>
+                    <div style={{flex:1}}>
+                      <div style={{fontWeight:600,fontSize:12}}>{f.station} · {f.fuel?.toUpperCase()}</div>
+                      <div style={{color:C.muted,fontSize:11}}>{new Date(f.ts).toLocaleDateString("de-DE",{day:"2-digit",month:"2-digit"})} · {f.liters}L × {fmt(f.pricePerL)}</div>
+                    </div>
+                    <div style={{fontFamily:"monospace",fontSize:14,fontWeight:700}}>{f.total.toFixed(2)} €</div>
+                    <div style={{cursor:"pointer",color:C.dim,fontSize:12}} onClick={()=>deleteFillup(f.id)}>✕</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {/* Tank level */}
+            <div style={s.card}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:C.muted,marginBottom:4}}>
+                <span>{t("fuelLevel",lang)}</span><span style={{fontFamily:"monospace",fontWeight:700}}>{Math.round(currentFuel)}% · ~{tankAdvisor.rangeKm} km</span>
+              </div>
+              <input type="range" min="0" max="100" step="5" value={currentFuel} onChange={e=>saveCurrentFuel(+e.target.value)} className="slide-range"/>
+            </div>
+          </div>
+        )}
         {tab==="settings"&&renderSettings()}
+      </div>
+      {/* BOTTOM NAV */}
+      <div className="bottom-nav">
+        {TABS.map(tb=>(
+          <div key={tb.id} className="nav-item" onClick={()=>{setTab(tb.id);if(tb.id==="prices")setSubView("list");if(tb.id==="forecast")setSubView("forecast")}} style={{color:tab===tb.id?C.green:C.muted}}>
+            <span className="nav-icon">{tb.icon}</span>
+            <span className="nav-label">{tb.label[lang]||tb.label.de}</span>
+          </div>
+        ))}
       </div>
     </div>
   );
