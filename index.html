@@ -561,7 +561,7 @@ function TankRadar(){
   const [brentTs,setBrentTs]=useState(()=>S.get("brent_ts")||null);
   const [lastFetch,setLastFetch]=useState(null);
   const [theme,setTheme]=useState(()=>S.get("theme")||"dark");
-  const [lang,setLang]=useState(()=>S.get("lang")||"de");
+  const [lang,setLang]=useState(()=>{const saved=S.get("lang");if(saved)return saved;const bl=(navigator.language||navigator.userLanguage||"de").slice(0,2).toLowerCase();return["de","en","tr"].includes(bl)?bl:"de"});
   const [loc,setLoc]=useState(()=>S.json("loc",{lat:52.4227,lng:10.7865,name:"Wolfsburg"}));
   const [rad,setRad]=useState(()=>parseInt(S.get("rad"))||25);
   const [locSearch,setLocSearch]=useState("");
