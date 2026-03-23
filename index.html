@@ -51,10 +51,11 @@ input[type=number]::-webkit-inner-spin-button{opacity:1}
 .fade-up{animation:fadeUp .4s var(--ease) both}
 .glow{animation:glow 3s ease-in-out infinite}
 /* Modal overlay */
-.modal-overlay{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;animation:fadeUp .25s var(--ease)}
+.modal-overlay{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;animation:fadeUp .25s var(--ease);overscroll-behavior:contain;touch-action:none}
 .dark .modal-overlay{background:rgba(0,0,0,.8);backdrop-filter:blur(12px)}
 .light .modal-overlay{background:rgba(0,0,0,.4);backdrop-filter:blur(12px)}
-body.modal-open{overflow:hidden;position:fixed;width:100%;touch-action:none}
+body.modal-open{overflow:hidden;-webkit-overflow-scrolling:auto}
+html.modal-open{overflow:hidden}
 /* Focus */
 input:focus,button:focus-visible{outline:2px solid rgba(16,185,129,.5);outline-offset:2px}
 /* Selection */
@@ -645,14 +646,11 @@ function TankRadar(){
   useEffect(()=>{document.body.classList.remove("dark","light");document.body.classList.add(theme)},[theme]);
   useEffect(()=>{
     if(detailStation){
-      const scrollY=window.scrollY;
-      document.body.style.top=`-${scrollY}px`;
       document.body.classList.add("modal-open");
+      document.documentElement.classList.add("modal-open");
     }else{
-      const top=parseInt(document.body.style.top||"0")*-1;
       document.body.classList.remove("modal-open");
-      document.body.style.top="";
-      window.scrollTo(0,top);
+      document.documentElement.classList.remove("modal-open");
     }
   },[detailStation]);
   useEffect(()=>{
@@ -992,34 +990,36 @@ function TankRadar(){
 
   // ─── MAP EFFECT ─────────────────────────────────────────────
   useEffect(()=>{
-    if(!(tab==="prices"&&subView==="map")||!mapRef.current||!L)return;
-    if(!mapInst.current){
-      mapInst.current=L.map(mapRef.current,{zoomControl:true}).setView([loc.lat,loc.lng],11);
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{attribution:'© OSM',maxZoom:18}).addTo(mapInst.current);
-    }else{
-      mapInst.current.setView([loc.lat,loc.lng],rad<=5?14:rad<=10?13:rad<=15?12:11);
-    }
-    markersRef.current.forEach(m=>m.remove());markersRef.current=[];
-    // Center marker
-    const cm=L.circleMarker([loc.lat,loc.lng],{radius:8,color:C.blue,fillColor:C.blue,fillOpacity:0.5,weight:2}).addTo(mapInst.current);
-    cm.bindTooltip(loc.name,{permanent:false});markersRef.current.push(cm);
-    // Radius circle
-    const rc=L.circle([loc.lat,loc.lng],{radius:rad*1000,color:C.amber,fillColor:C.amber,fillOpacity:0.03,weight:1,dashArray:"5,5"}).addTo(mapInst.current);
-    markersRef.current.push(rc);
-    // Station markers
-    const stList=demo?DEMO_STATIONS:stations;
-    stList.forEach(st=>{
-      if(!st.lat||!st.lng)return;
-      const hasP=typeof st.price==="number"&&st.price>0;
-      const priceText=hasP?fmt(st.price):"—";
-      const color=!st.isOpen?"#666":!hasP?"#666":st===cheapest?C.green:C.text;
-      const bg=!st.isOpen?"#333":!hasP?"#333":st===cheapest?"#065f46":C.card;
-      const icon=L.divIcon({className:"price-marker",html:`<div class="price-label" style="background:${bg};color:${color};border:1px solid ${C.border}">${priceText}</div>`,iconSize:[54,22],iconAnchor:[27,11]});
-      const m=L.marker([st.lat,st.lng],{icon}).addTo(mapInst.current);
-      m.bindPopup(`<div style="font-family:DM Sans,sans-serif;font-size:13px"><strong>${st.brand||""} ${st.name}</strong><br/>${st.street} ${st.houseNumber||""}, ${st.place}<br/><span style="font-family:JetBrains Mono,monospace;font-size:16px;font-weight:700;color:${color}">${priceText} €</span><br/><span style="font-size:11px;color:${C.muted}">${st.dist?.toFixed(1)} km · ${st.isOpen?t("open",lang):t("closed",lang)}</span></div>`,{className:"station-popup"});
-      markersRef.current.push(m);
-    });
-    setTimeout(()=>mapInst.current?.invalidateSize(),100);
+    if(!(tab==="prices"&&subView==="map")||!L)return;
+    // Delay to ensure DOM is rendered
+    const timer=setTimeout(()=>{
+      if(!mapRef.current)return;
+      if(!mapInst.current){
+        mapInst.current=L.map(mapRef.current,{zoomControl:true}).setView([loc.lat,loc.lng],11);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{attribution:'© OSM',maxZoom:18}).addTo(mapInst.current);
+      }else{
+        mapInst.current.setView([loc.lat,loc.lng],rad<=5?14:rad<=10?13:rad<=15?12:11);
+      }
+      markersRef.current.forEach(m=>m.remove());markersRef.current=[];
+      const cm=L.circleMarker([loc.lat,loc.lng],{radius:8,color:C.blue,fillColor:C.blue,fillOpacity:0.5,weight:2}).addTo(mapInst.current);
+      cm.bindTooltip(loc.name,{permanent:false});markersRef.current.push(cm);
+      const rc=L.circle([loc.lat,loc.lng],{radius:rad*1000,color:C.amber,fillColor:C.amber,fillOpacity:0.03,weight:1,dashArray:"5,5"}).addTo(mapInst.current);
+      markersRef.current.push(rc);
+      const stList=demo?DEMO_STATIONS:stations;
+      stList.forEach(st=>{
+        if(!st.lat||!st.lng)return;
+        const hasP=typeof st.price==="number"&&st.price>0;
+        const priceText=hasP?fmt(st.price):"—";
+        const color=!st.isOpen?"#666":!hasP?"#666":st===cheapest?C.green:C.text;
+        const bg=!st.isOpen?"#333":!hasP?"#333":st===cheapest?"#065f46":C.cardSolid;
+        const icon=L.divIcon({className:"price-marker",html:`<div class="price-label" style="background:${bg};color:${color};border:1px solid ${C.border}">${priceText}</div>`,iconSize:[54,22],iconAnchor:[27,11]});
+        const m=L.marker([st.lat,st.lng],{icon}).addTo(mapInst.current);
+        m.bindPopup(`<div style="font-family:Outfit,sans-serif;font-size:13px"><strong>${st.brand||""} ${st.name}</strong><br/>${st.street} ${st.houseNumber||""}, ${st.place}<br/><span style="font-family:JetBrains Mono,monospace;font-size:16px;font-weight:700;color:${color}">${priceText} €</span><br/><span style="font-size:11px;color:${C.muted}">${st.dist?.toFixed(1)} km · ${st.isOpen?t("open",lang):t("closed",lang)}</span></div>`,{className:"station-popup"});
+        markersRef.current.push(m);
+      });
+      mapInst.current.invalidateSize();
+    },150);
+    return()=>clearTimeout(timer);
   },[tab,subView,stations,demo,loc,rad,theme,cheapest]);
 
   // Cleanup map on unmount from tab
