@@ -609,7 +609,7 @@ function TankRadar(){
       attempts++;
       if(attempts>30){clearInterval(poll);setTgConnecting(false);return}
       try{
-        const r=await fetch(`/api/tg-connect?token=${token}`);
+        const r=await fetch(`/api/tg-connect?token=${token}&lang=${lang}`);
         const d=await r.json();
         if(d.found&&d.chat_id){
           clearInterval(poll);
@@ -1854,7 +1854,7 @@ function TankRadar(){
               <div style={{display:"flex",alignItems:"center",gap:8,padding:10,borderRadius:8,background:C.greenGlow,border:`1px solid ${C.green}`}}>
                 <span style={{fontSize:18}}>✅</span>
                 <div style={{flex:1}}>
-                  <div style={{fontWeight:600,fontSize:13}}>{notifTgName||"Verbunden"}</div>
+                  <div style={{fontWeight:600,fontSize:13}}>{notifTgName||"Telegram"} ✓</div>
                   <div style={{fontSize:11,color:C.muted,fontFamily:"monospace"}}>ID: {notifTelegram}</div>
                 </div>
                 <button onClick={disconnectTelegram} style={{...s.btnM,padding:"4px 10px",fontSize:11}}>✕</button>
