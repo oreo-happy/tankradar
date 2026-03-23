@@ -202,17 +202,154 @@ export default async function handler(req, res) {
     );
 
     const fullModel = {
-      version: 1,
+      version: 2,
       trained_at: new Date().toISOString(),
       data_points: stats.dataPoints,
       stations_trained: stats.stations,
       market: {
         avg: marketAvg,
-        hourly_ct: globalHourlyAvg,  // global hourly delta in ct/L
-        daily_ct: globalDailyAvg,    // global daily delta in ct/L
+        hourly_ct: globalHourlyAvg,
+        daily_ct: globalDailyAvg,
       },
+      brent: null,
       stations: model,
     };
+
+    // ─── 3b. BRENT CORRELATION & LAG ANALYSIS ──────────────────
+    try {
+      // Fetch Brent history
+      const brentRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/brent_history?order=period.desc&limit=90`,
+        { headers }
+      );
+      const brentData = await brentRes.json();
+
+      if (Array.isArray(brentData) && brentData.length >= 7) {
+        // Build daily pump price averages
+        const pumpByDay = {};
+        for (const row of allData) {
+          if (row.fuel_type !== "e10") continue; // use e10 as benchmark
+          const day = row.fetched_at.slice(0, 10);
+          if (!pumpByDay[day]) pumpByDay[day] = [];
+          pumpByDay[day].push(parseFloat(row.price));
+        }
+        const dailyPump = {};
+        for (const [day, prices] of Object.entries(pumpByDay)) {
+          dailyPump[day] = +(prices.reduce((a, b) => a + b, 0) / prices.length).toFixed(3);
+        }
+
+        // Build Brent daily map
+        const dailyBrent = {};
+        for (const b of brentData) {
+          dailyBrent[b.period] = parseFloat(b.price);
+        }
+
+        // Get EUR/USD for conversion
+        let usdEur = 0.92;
+        try {
+          const fxRes = await fetch("https://api.frankfurter.app/latest?from=USD&to=EUR");
+          const fxData = await fxRes.json();
+          if (fxData.rates?.EUR) usdEur = fxData.rates.EUR;
+        } catch {}
+
+        // Sorted dates where we have both pump and brent data
+        const allDays = Object.keys(dailyPump).filter(d => dailyBrent[d]).sort();
+
+        // Cross-correlation: try lags 0-21 days
+        const lagCorrelations = [];
+        if (allDays.length >= 5) {
+          for (let lag = 0; lag <= 21; lag++) {
+            const pairs = [];
+            for (let i = lag; i < allDays.length; i++) {
+              const pumpDay = allDays[i];
+              const brentDay = allDays[i - lag];
+              if (dailyPump[pumpDay] && dailyBrent[brentDay]) {
+                pairs.push({ pump: dailyPump[pumpDay], brent: dailyBrent[brentDay] * usdEur / 159 }); // convert to EUR per litre
+              }
+            }
+            if (pairs.length >= 3) {
+              const avgPump = pairs.reduce((a, p) => a + p.pump, 0) / pairs.length;
+              const avgBrent = pairs.reduce((a, p) => a + p.brent, 0) / pairs.length;
+              let num = 0, denPump = 0, denBrent = 0;
+              for (const p of pairs) {
+                const dp = p.pump - avgPump;
+                const db = p.brent - avgBrent;
+                num += dp * db;
+                denPump += dp * dp;
+                denBrent += db * db;
+              }
+              const corr = (denPump > 0 && denBrent > 0) ? num / Math.sqrt(denPump * denBrent) : 0;
+              lagCorrelations.push({ lag, corr: +corr.toFixed(4), pairs: pairs.length });
+            }
+          }
+        }
+
+        // Find optimal lag (highest correlation)
+        const bestLag = lagCorrelations.length > 0
+          ? lagCorrelations.reduce((a, b) => Math.abs(b.corr) > Math.abs(a.corr) ? b : a)
+          : { lag: 14, corr: 0 };
+
+        // Asymmetric lag: separate rising vs falling Brent
+        let upLags = [], downLags = [];
+        if (allDays.length >= 5) {
+          for (let i = 1; i < allDays.length; i++) {
+            const prevBrent = dailyBrent[allDays[i - 1]];
+            const currBrent = dailyBrent[allDays[i]];
+            if (!prevBrent || !currBrent) continue;
+            const brentChange = currBrent - prevBrent;
+            // Look for when pump followed
+            for (let j = i; j < Math.min(i + 21, allDays.length); j++) {
+              const pumpChange = dailyPump[allDays[j]] - dailyPump[allDays[i]];
+              if (brentChange > 0.5 && pumpChange > 0.003) { upLags.push(j - i); break; }
+              if (brentChange < -0.5 && pumpChange < -0.003) { downLags.push(j - i); break; }
+            }
+          }
+        }
+
+        const avgUpLag = upLags.length > 0 ? +(upLags.reduce((a, b) => a + b, 0) / upLags.length).toFixed(1) : null;
+        const avgDownLag = downLags.length > 0 ? +(downLags.reduce((a, b) => a + b, 0) / downLags.length).toFixed(1) : null;
+
+        // Current Brent trend (14-day change)
+        const sortedBrent = brentData.sort((a, b) => a.period.localeCompare(b.period));
+        const latestBrent = sortedBrent[sortedBrent.length - 1];
+        const brent14ago = sortedBrent.length >= 14 ? sortedBrent[sortedBrent.length - 14] : sortedBrent[0];
+        const brentTrend14d = latestBrent && brent14ago
+          ? +((parseFloat(latestBrent.price) - parseFloat(brent14ago.price)) / parseFloat(brent14ago.price) * 100).toFixed(1)
+          : 0;
+
+        // Predict pump direction
+        const brentChangeUsd = latestBrent && brent14ago
+          ? parseFloat(latestBrent.price) - parseFloat(brent14ago.price) : 0;
+        const brentChangeEurPerL = brentChangeUsd * usdEur / 159;
+        const predictedPumpChange = +(brentChangeEurPerL * 1.19 * 100).toFixed(1); // include MwSt
+
+        // Confidence based on data quality
+        const confidence = Math.min(100, Math.round(
+          (allDays.length >= 14 ? 30 : allDays.length * 2) +
+          (lagCorrelations.length >= 5 ? 20 : lagCorrelations.length * 4) +
+          (Math.abs(bestLag.corr) * 50)
+        ));
+
+        fullModel.brent = {
+          latest: latestBrent ? { price: parseFloat(latestBrent.price), date: latestBrent.period } : null,
+          trend14d: brentTrend14d,                    // % change over 14 days
+          predictedPumpChangeCt: predictedPumpChange,  // predicted ct/L change at pump
+          optimalLag: bestLag.lag,                      // best correlation lag in days
+          optimalCorrelation: bestLag.corr,             // correlation at that lag
+          asymmetry: {
+            upLagDays: avgUpLag,                       // avg days for price increases to propagate
+            downLagDays: avgDownLag,                    // avg days for decreases (usually longer)
+            samples: { up: upLags.length, down: downLags.length },
+          },
+          direction: brentTrend14d > 3 ? "rising" : brentTrend14d < -3 ? "falling" : "stable",
+          confidence,
+          usdEur,
+          lagCorrelations: lagCorrelations.slice(0, 10), // top lags for debugging
+        };
+      }
+    } catch (e) {
+      stats.errors.push(`Brent analysis error: ${e.message}`);
+    }
 
     const modelJson = JSON.stringify(fullModel);
     stats.modelSize = modelJson.length;
@@ -254,6 +391,15 @@ export default async function handler(req, res) {
           vacSensitivity: Object.values(model)[0].vs + " ct",
           trend: Object.values(model)[0].tr + " ct (3d)",
         } : null,
+        brent: fullModel.brent ? {
+          latest: `$${fullModel.brent.latest?.price} (${fullModel.brent.latest?.date})`,
+          trend: `${fullModel.brent.trend14d}% (14d)`,
+          direction: fullModel.brent.direction,
+          pumpForecast: `${fullModel.brent.predictedPumpChangeCt > 0 ? "+" : ""}${fullModel.brent.predictedPumpChangeCt} ct/L`,
+          optimalLag: `${fullModel.brent.optimalLag} days (r=${fullModel.brent.optimalCorrelation})`,
+          asymmetry: fullModel.brent.asymmetry?.upLagDays != null ? `Up: ${fullModel.brent.asymmetry.upLagDays}d, Down: ${fullModel.brent.asymmetry.downLagDays}d` : "Not enough data",
+          confidence: `${fullModel.brent.confidence}%`,
+        } : "No Brent data",
       },
     });
   } catch (e) {
