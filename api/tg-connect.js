@@ -13,10 +13,26 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Invalid token" });
   }
 
+  // Clean name: reject dots, single chars, numbers-only, whitespace-only
+  const cleanName = (raw) => {
+    if (!raw) return "";
+    const s = raw.trim();
+    if (s.length < 2) return "";
+    if (/^[.\-_!?]+$/.test(s)) return "";
+    if (/^\d+$/.test(s)) return "";
+    return s;
+  };
+
   const WELCOME = {
-    de: (name) => `✅ <b>TankRadar verbunden!</b>\n\nHey${name ? " " + name : ""}! Du bekommst ab jetzt Preisalarme direkt hier auf Telegram.\n\n🔔 Alarme kannst du in der App konfigurieren.\n⛽ <a href="https://tankradar.vercel.app">tankradar.vercel.app</a>`,
-    en: (name) => `✅ <b>TankRadar connected!</b>\n\nHey${name ? " " + name : ""}! You'll now receive price alerts right here on Telegram.\n\n🔔 Configure alerts in the app.\n⛽ <a href="https://tankradar.vercel.app">tankradar.vercel.app</a>`,
-    tr: (name) => `✅ <b>TankRadar bağlandı!</b>\n\nMerhaba${name ? " " + name : ""}! Artık fiyat alarmlarını doğrudan Telegram'dan alacaksın.\n\n🔔 Alarmları uygulamadan ayarlayabilirsin.\n⛽ <a href="https://tankradar.vercel.app">tankradar.vercel.app</a>`,
+    de: (name) => name
+      ? `✅ <b>TankRadar verbunden!</b>\n\nHey ${name}! Du bekommst ab jetzt Preisalarme direkt hier auf Telegram.\n\n🔔 Alarme kannst du in der App konfigurieren.\n⛽ <a href="https://tankradar.vercel.app">tankradar.vercel.app</a>`
+      : `✅ <b>TankRadar verbunden!</b>\n\nDu bekommst ab jetzt Preisalarme direkt hier auf Telegram.\n\n🔔 Alarme kannst du in der App konfigurieren.\n⛽ <a href="https://tankradar.vercel.app">tankradar.vercel.app</a>`,
+    en: (name) => name
+      ? `✅ <b>TankRadar connected!</b>\n\nHey ${name}! You'll now receive price alerts right here on Telegram.\n\n🔔 Configure alerts in the app.\n⛽ <a href="https://tankradar.vercel.app">tankradar.vercel.app</a>`
+      : `✅ <b>TankRadar connected!</b>\n\nYou'll now receive price alerts right here on Telegram.\n\n🔔 Configure alerts in the app.\n⛽ <a href="https://tankradar.vercel.app">tankradar.vercel.app</a>`,
+    tr: (name) => name
+      ? `✅ <b>TankRadar bağlandı!</b>\n\nMerhaba ${name}! Artık fiyat alarmlarını doğrudan Telegram'dan alacaksın.\n\n🔔 Alarmları uygulamadan ayarlayabilirsin.\n⛽ <a href="https://tankradar.vercel.app">tankradar.vercel.app</a>`
+      : `✅ <b>TankRadar bağlandı!</b>\n\nArtık fiyat alarmlarını doğrudan Telegram'dan alacaksın.\n\n🔔 Alarmları uygulamadan ayarlayabilirsin.\n⛽ <a href="https://tankradar.vercel.app">tankradar.vercel.app</a>`,
   };
 
   try {
@@ -35,11 +51,10 @@ export default async function handler(req, res) {
 
       if (msg.text === `/start ${token}` || msg.text === `/start ${token} `) {
         const chatId = msg.chat.id;
-        const firstName = (msg.chat.first_name || "").trim();
-        const username = (msg.chat.username || "").trim();
+        const firstName = cleanName(msg.chat.first_name);
+        const username = cleanName(msg.chat.username);
         const displayName = firstName || username || "";
 
-        // Send welcome in user's app language
         const welcomeFn = WELCOME[lang] || WELCOME.de;
         await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
           method: "POST",
@@ -57,7 +72,7 @@ export default async function handler(req, res) {
           found: true,
           chat_id: String(chatId),
           name: displayName,
-          username,
+          username: username,
         });
       }
     }
