@@ -1,0 +1,13 @@
+{
+  "functions": {
+    "api/collect.js": {
+      "maxDuration": 30
+    },
+    "api/train.js": {
+      "maxDuration": 60
+    },
+    "api/notify.js": {
+      "maxDuration": 15
+    }
+  }
+}
