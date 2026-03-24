@@ -636,6 +636,12 @@ function TankRadar(){
   const mapRef=useRef(null);
   const mapInst=useRef(null);
   const markersRef=useRef([]);
+  const [mapReady,setMapReady]=useState(false);
+  const mapContainerRef=useCallback(node=>{
+    mapRef.current=node;
+    if(node)setMapReady(true);
+    else setMapReady(false);
+  },[]);
 
   const C=THEMES[theme];
   const dn=DAY_NAMES[lang]||DAY_NAMES.de;
@@ -990,42 +996,35 @@ function TankRadar(){
 
   // ─── MAP EFFECT ─────────────────────────────────────────────
   useEffect(()=>{
-    if(!(tab==="prices"&&subView==="map")||!L)return;
-    // Delay to ensure DOM is rendered
-    const timer=setTimeout(()=>{
-      if(!mapRef.current)return;
-      if(!mapInst.current){
-        mapInst.current=L.map(mapRef.current,{zoomControl:true}).setView([loc.lat,loc.lng],11);
-        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{attribution:'© OSM',maxZoom:18}).addTo(mapInst.current);
-      }else{
-        mapInst.current.setView([loc.lat,loc.lng],rad<=5?14:rad<=10?13:rad<=15?12:11);
-      }
-      markersRef.current.forEach(m=>m.remove());markersRef.current=[];
-      const cm=L.circleMarker([loc.lat,loc.lng],{radius:8,color:C.blue,fillColor:C.blue,fillOpacity:0.5,weight:2}).addTo(mapInst.current);
-      cm.bindTooltip(loc.name,{permanent:false});markersRef.current.push(cm);
-      const rc=L.circle([loc.lat,loc.lng],{radius:rad*1000,color:C.amber,fillColor:C.amber,fillOpacity:0.03,weight:1,dashArray:"5,5"}).addTo(mapInst.current);
-      markersRef.current.push(rc);
-      const stList=demo?DEMO_STATIONS:stations;
-      stList.forEach(st=>{
-        if(!st.lat||!st.lng)return;
-        const hasP=typeof st.price==="number"&&st.price>0;
-        const priceText=hasP?fmt(st.price):"—";
-        const color=!st.isOpen?"#666":!hasP?"#666":st===cheapest?C.green:C.text;
-        const bg=!st.isOpen?"#333":!hasP?"#333":st===cheapest?"#065f46":C.cardSolid;
-        const icon=L.divIcon({className:"price-marker",html:`<div class="price-label" style="background:${bg};color:${color};border:1px solid ${C.border}">${priceText}</div>`,iconSize:[54,22],iconAnchor:[27,11]});
-        const m=L.marker([st.lat,st.lng],{icon}).addTo(mapInst.current);
-        m.bindPopup(`<div style="font-family:Outfit,sans-serif;font-size:13px"><strong>${st.brand||""} ${st.name}</strong><br/>${st.street} ${st.houseNumber||""}, ${st.place}<br/><span style="font-family:JetBrains Mono,monospace;font-size:16px;font-weight:700;color:${color}">${priceText} €</span><br/><span style="font-size:11px;color:${C.muted}">${st.dist?.toFixed(1)} km · ${st.isOpen?t("open",lang):t("closed",lang)}</span></div>`,{className:"station-popup"});
-        markersRef.current.push(m);
-      });
-      mapInst.current.invalidateSize();
-    },150);
-    return()=>clearTimeout(timer);
-  },[tab,subView,stations,demo,loc,rad,theme,cheapest]);
-
-  // Cleanup map on unmount from tab
-  useEffect(()=>{
-    if(!(tab==="prices"&&subView==="map")&&mapInst.current){mapInst.current.remove();mapInst.current=null;markersRef.current=[]}
-  },[tab,subView]);
+    if(!(tab==="prices"&&subView==="map")||!mapReady||!mapRef.current||!L)return;
+    // Destroy old instance if exists (prevents "already initialized" error)
+    if(mapInst.current){try{mapInst.current.remove()}catch(e){};mapInst.current=null;markersRef.current=[]}
+    // Create fresh map
+    const map=L.map(mapRef.current,{zoomControl:true}).setView([loc.lat,loc.lng],rad<=5?14:rad<=10?13:rad<=15?12:11);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{attribution:'© OSM',maxZoom:18}).addTo(map);
+    mapInst.current=map;
+    // Center marker
+    const cm=L.circleMarker([loc.lat,loc.lng],{radius:8,color:C.blue,fillColor:C.blue,fillOpacity:0.5,weight:2}).addTo(map);
+    cm.bindTooltip(loc.name,{permanent:false});markersRef.current.push(cm);
+    // Radius circle
+    const rc=L.circle([loc.lat,loc.lng],{radius:rad*1000,color:C.amber,fillColor:C.amber,fillOpacity:0.03,weight:1,dashArray:"5,5"}).addTo(map);
+    markersRef.current.push(rc);
+    // Station markers
+    const stList=demo?DEMO_STATIONS:stations;
+    stList.forEach(st=>{
+      if(!st.lat||!st.lng)return;
+      const hasP=typeof st.price==="number"&&st.price>0;
+      const priceText=hasP?fmt(st.price):"—";
+      const color=!st.isOpen?"#666":!hasP?"#666":st===cheapest?C.green:C.text;
+      const bg=!st.isOpen?"#333":!hasP?"#333":st===cheapest?"#065f46":C.cardSolid;
+      const icon=L.divIcon({className:"price-marker",html:`<div class="price-label" style="background:${bg};color:${color};border:1px solid ${C.border}">${priceText}</div>`,iconSize:[54,22],iconAnchor:[27,11]});
+      const m=L.marker([st.lat,st.lng],{icon}).addTo(map);
+      m.bindPopup(`<div style="font-family:Outfit,sans-serif;font-size:13px"><strong>${st.brand||""} ${st.name}</strong><br/>${st.street||""} ${st.houseNumber||""}, ${st.place||""}<br/><span style="font-family:JetBrains Mono,monospace;font-size:16px;font-weight:700;color:${color}">${priceText} €</span><br/><span style="font-size:11px;color:${C.muted}">${st.dist?.toFixed(1)} km · ${st.isOpen?t("open",lang):t("closed",lang)}</span></div>`,{className:"station-popup"});
+      markersRef.current.push(m);
+    });
+    setTimeout(()=>map.invalidateSize(),50);
+    return()=>{try{map.remove()}catch(e){};mapInst.current=null;markersRef.current=[]};
+  },[tab,subView,mapReady,stations,demo,loc,rad,theme,cheapest]);
 
   // ─── STYLES ─────────────────────────────────────────────────
   const s={
@@ -1172,7 +1171,109 @@ function TankRadar(){
 
   // ─── DASHBOARD ──────────────────────────────────────────────
   // ─── HINT SYSTEM ─────────────────────────────────────────────
-  const APP_VERSION="2.6";
+  // ─── iOS HOMESCREEN WALKTHROUGH ────────────────────────────
+  const [showPWAGuide,setShowPWAGuide]=useState(false);
+  const [pwaStep,setPwaStep]=useState(0);
+  const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent);
+  const isIOS26=(()=>{const m=navigator.userAgent.match(/OS (\d+)/);return m&&parseInt(m[1])>=26})();
+  const isSafari=/Safari/.test(navigator.userAgent)&&!/CriOS|FxiOS|Chrome/.test(navigator.userAgent);
+  const isStandalone=window.matchMedia("(display-mode:standalone)").matches||window.navigator.standalone;
+
+  const pwaSteps=isIOS26?[
+    {title:lang==="de"?"Menü öffnen":"Open menu",desc:lang==="de"?"Tippe auf die drei Punkte ··· oben rechts in Safari.":"Tap the three dots ··· at the top right in Safari.",
+      svg:`<svg viewBox="0 0 280 180" xmlns="http://www.w3.org/2000/svg">
+        <rect x="20" y="10" width="240" height="160" rx="16" fill="#1a1a1a" stroke="#333" stroke-width="1.5"/>
+        <rect x="30" y="20" width="220" height="30" rx="8" fill="#0d0d0d"/>
+        <text x="60" y="40" fill="#666" font-size="11" font-family="system-ui">tankradar.vercel.app</text>
+        <circle cx="230" cy="35" r="3" fill="#888"/><circle cx="222" cy="35" r="3" fill="#888"/><circle cx="238" cy="35" r="3" fill="#888"/>
+        <circle cx="230" cy="35" r="14" fill="none" stroke="#10b981" stroke-width="2.5" stroke-dasharray="4 2"><animate attributeName="r" values="14;18;14" dur="1.5s" repeatCount="indefinite"/></circle>
+        <text x="140" y="100" fill="#555" font-size="12" text-anchor="middle" font-family="system-ui">TankRadar</text>
+      </svg>`},
+    {title:lang==="de"?"\"Zum Home-Bildschirm\"":"\"Add to Home Screen\"",desc:lang==="de"?"Scrolle im Menü nach unten und tippe auf \"Zum Home-Bildschirm\".":"Scroll down in the menu and tap \"Add to Home Screen\".",
+      svg:`<svg viewBox="0 0 280 180" xmlns="http://www.w3.org/2000/svg">
+        <rect x="40" y="5" width="200" height="170" rx="14" fill="#1a1a1a" stroke="#333" stroke-width="1.5"/>
+        <rect x="55" y="20" width="170" height="28" rx="7" fill="#222"/><text x="140" y="39" fill="#888" font-size="10" text-anchor="middle" font-family="system-ui">Lesezeichen</text>
+        <rect x="55" y="54" width="170" height="28" rx="7" fill="#222"/><text x="140" y="73" fill="#888" font-size="10" text-anchor="middle" font-family="system-ui">Zum Startbildschirm</text>
+        <rect x="55" y="88" width="170" height="28" rx="7" fill="#111" stroke="#10b981" stroke-width="2"/>
+        <text x="82" y="107" fill="#10b981" font-size="10" font-family="system-ui">＋ Zum Home-Bildschirm</text>
+        <rect x="55" y="88" width="170" height="28" rx="7" fill="none" stroke="#10b981" stroke-width="2"><animate attributeName="stroke-opacity" values="1;.3;1" dur="1.5s" repeatCount="indefinite"/></rect>
+        <rect x="55" y="122" width="170" height="28" rx="7" fill="#222"/><text x="140" y="141" fill="#888" font-size="10" text-anchor="middle" font-family="system-ui">Drucken</text>
+      </svg>`},
+    {title:lang==="de"?"Fertig — hinzufügen!":"Done — add it!",desc:lang==="de"?"Tippe oben rechts auf \"Hinzufügen\". TankRadar erscheint auf deinem Home-Bildschirm.":"Tap \"Add\" in the top right. TankRadar appears on your home screen.",
+      svg:`<svg viewBox="0 0 280 180" xmlns="http://www.w3.org/2000/svg">
+        <rect x="20" y="10" width="240" height="160" rx="16" fill="#1a1a1a" stroke="#333" stroke-width="1.5"/>
+        <text x="50" y="38" fill="#3b82f6" font-size="12" font-family="system-ui">Abbrechen</text>
+        <text x="230" y="38" fill="#10b981" font-size="12" font-weight="700" font-family="system-ui" text-anchor="end">Hinzuf.</text>
+        <rect x="195" y="23" width="55" height="22" rx="6" fill="none" stroke="#10b981" stroke-width="2"><animate attributeName="stroke-opacity" values="1;.3;1" dur="1.5s" repeatCount="indefinite"/></rect>
+        <rect x="80" y="60" width="120" height="24" rx="6" fill="#222"/>
+        <text x="140" y="77" fill="#eee" font-size="11" text-anchor="middle" font-family="system-ui">TankRadar</text>
+        <rect x="110" y="100" width="60" height="60" rx="14" fill="#111" stroke="#333" stroke-width="1"/>
+        <text x="140" y="137" fill="#10b981" font-size="22" text-anchor="middle">⛽</text>
+      </svg>`},
+  ]:[
+    {title:lang==="de"?"Teilen-Button":"Share button",desc:lang==="de"?"Tippe auf das Teilen-Symbol (⬆) unten in der Safari-Leiste.":"Tap the Share icon (⬆) at the bottom of the Safari toolbar.",
+      svg:`<svg viewBox="0 0 280 180" xmlns="http://www.w3.org/2000/svg">
+        <rect x="20" y="10" width="240" height="160" rx="16" fill="#1a1a1a" stroke="#333" stroke-width="1.5"/>
+        <text x="140" y="80" fill="#555" font-size="12" text-anchor="middle" font-family="system-ui">TankRadar</text>
+        <rect x="20" y="140" width="240" height="30" rx="0" fill="#0d0d0d"/>
+        <text x="140" y="160" fill="#3b82f6" font-size="18" text-anchor="middle" font-family="system-ui">⬆</text>
+        <circle cx="140" cy="157" r="16" fill="none" stroke="#10b981" stroke-width="2.5"><animate attributeName="r" values="16;20;16" dur="1.5s" repeatCount="indefinite"/></circle>
+      </svg>`},
+    {title:lang==="de"?"\"Zum Home-Bildschirm\"":"\"Add to Home Screen\"",desc:lang==="de"?"Scrolle nach unten und tippe \"Zum Home-Bildschirm hinzufügen\".":"Scroll down and tap \"Add to Home Screen\".",
+      svg:`<svg viewBox="0 0 280 180" xmlns="http://www.w3.org/2000/svg">
+        <rect x="40" y="5" width="200" height="170" rx="14" fill="#1a1a1a" stroke="#333" stroke-width="1.5"/>
+        <rect x="55" y="20" width="170" height="28" rx="7" fill="#222"/><text x="140" y="39" fill="#888" font-size="10" text-anchor="middle" font-family="system-ui">Kopieren</text>
+        <rect x="55" y="54" width="170" height="28" rx="7" fill="#222"/><text x="140" y="73" fill="#888" font-size="10" text-anchor="middle" font-family="system-ui">Lesezeichen</text>
+        <rect x="55" y="88" width="170" height="28" rx="7" fill="#111" stroke="#10b981" stroke-width="2"/>
+        <text x="82" y="107" fill="#10b981" font-size="10" font-family="system-ui">＋ Zum Home-Bildschirm</text>
+        <rect x="55" y="88" width="170" height="28" rx="7" fill="none" stroke="#10b981" stroke-width="2"><animate attributeName="stroke-opacity" values="1;.3;1" dur="1.5s" repeatCount="indefinite"/></rect>
+        <rect x="55" y="122" width="170" height="28" rx="7" fill="#222"/><text x="140" y="141" fill="#888" font-size="10" text-anchor="middle" font-family="system-ui">Drucken</text>
+      </svg>`},
+    {title:lang==="de"?"Fertig — hinzufügen!":"Done — add it!",desc:lang==="de"?"Tippe oben rechts auf \"Hinzufügen\". TankRadar erscheint auf deinem Home-Bildschirm.":"Tap \"Add\" in the top right. TankRadar appears on your home screen.",
+      svg:`<svg viewBox="0 0 280 180" xmlns="http://www.w3.org/2000/svg">
+        <rect x="20" y="10" width="240" height="160" rx="16" fill="#1a1a1a" stroke="#333" stroke-width="1.5"/>
+        <text x="50" y="38" fill="#3b82f6" font-size="12" font-family="system-ui">Abbrechen</text>
+        <text x="230" y="38" fill="#10b981" font-size="12" font-weight="700" font-family="system-ui" text-anchor="end">Hinzuf.</text>
+        <rect x="195" y="23" width="55" height="22" rx="6" fill="none" stroke="#10b981" stroke-width="2"><animate attributeName="stroke-opacity" values="1;.3;1" dur="1.5s" repeatCount="indefinite"/></rect>
+        <rect x="80" y="60" width="120" height="24" rx="6" fill="#222"/>
+        <text x="140" y="77" fill="#eee" font-size="11" text-anchor="middle" font-family="system-ui">TankRadar</text>
+        <rect x="110" y="100" width="60" height="60" rx="14" fill="#111" stroke="#333" stroke-width="1"/>
+        <text x="140" y="137" fill="#10b981" font-size="22" text-anchor="middle">⛽</text>
+      </svg>`},
+  ];
+
+  const PWAGuideModal=()=>{
+    if(!showPWAGuide)return null;
+    const step=pwaSteps[pwaStep];
+    const total=pwaSteps.length;
+    return(
+      <div className="modal-overlay" onClick={()=>{setShowPWAGuide(false);setPwaStep(0)}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:C.cardSolid,borderRadius:20,border:`1px solid ${C.glassBorder}`,padding:24,maxWidth:320,width:"100%",textAlign:"center"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+            <div style={{fontSize:12,color:C.muted,fontWeight:600}}>{lang==="de"?"Schritt":"Step"} {pwaStep+1}/{total}</div>
+            <div onClick={()=>{setShowPWAGuide(false);setPwaStep(0);dismissHint("home_pwa")}} style={{cursor:"pointer",color:C.dim,fontSize:16}}>✕</div>
+          </div>
+          <div style={{marginBottom:16,borderRadius:12,overflow:"hidden",background:"#111",padding:8}} dangerouslySetInnerHTML={{__html:step.svg}}/>
+          <div style={{fontWeight:700,fontSize:16,marginBottom:4}}>{step.title}</div>
+          <div style={{color:C.muted,fontSize:13,lineHeight:1.5,marginBottom:20}}>{step.desc}</div>
+          <div style={{display:"flex",gap:8,justifyContent:"center"}}>
+            {pwaStep>0&&(
+              <button onClick={()=>setPwaStep(pwaStep-1)} style={{...s.btnM,flex:1}}>←</button>
+            )}
+            {pwaStep<total-1?(
+              <button onClick={()=>setPwaStep(pwaStep+1)} style={{...s.btn,flex:1}}>{lang==="de"?"Weiter":"Next"} →</button>
+            ):(
+              <button onClick={()=>{setShowPWAGuide(false);setPwaStep(0);dismissHint("home_pwa")}} style={{...s.btn,flex:1}}>✓ {lang==="de"?"Verstanden":"Got it"}</button>
+            )}
+          </div>
+          <div style={{display:"flex",justifyContent:"center",gap:6,marginTop:12}}>
+            {pwaSteps.map((_,i)=><div key={i} style={{width:8,height:8,borderRadius:4,background:i===pwaStep?C.green:C.border}}/>)}
+          </div>
+        </div>
+      </div>
+    );
+  };
+  const APP_VERSION="2.7";
   const [dismissedHints,setDismissedHints]=useState(()=>S.json("hints_dismissed",[]));
   const [versionSeen,setVersionSeen]=useState(()=>S.get("version_seen")||"");
   const dismissHint=(id)=>{const next=[...dismissedHints,id];setDismissedHints(next);S.set("hints_dismissed",JSON.stringify(next))};
@@ -1194,7 +1295,7 @@ function TankRadar(){
         <span style={{fontSize:14}}>🆕</span>
         <div style={{flex:1}}>
           <div style={{fontWeight:700,fontSize:13}}>v{APP_VERSION}</div>
-          <div style={{fontSize:11,color:C.muted,marginTop:1}}>{lang==="de"?"Telegram-Alarme · Favoriten · Heatmap · Brent-Prognose · Auto-Erkennung":"Telegram alerts · Favorites · Heatmap · Brent forecast · Auto-detect"}</div>
+          <div style={{fontSize:11,color:C.muted,marginTop:1}}>{lang==="de"?"iOS-Installationsguide · Kontexthilfen · Brent-Prognose · Heatmap":"iOS install guide · Contextual hints · Brent forecast · Heatmap"}</div>
         </div>
         <div onClick={dismissVersion} style={{cursor:"pointer",color:C.green,fontSize:11,flexShrink:0,padding:"4px 8px",borderRadius:6,background:C.glass}}>✕</div>
       </div>
@@ -1208,7 +1309,16 @@ function TankRadar(){
       <VersionBanner/>
       <Hint id="home_fav" emoji="⭐">{lang==="de"?"Tippe ☆ bei einer Tankstelle um sie als Favorit zu pinnen. Favoriten erscheinen oben.":"Tap ☆ on any station to pin it as favorite. Favorites appear at the top."}</Hint>
       <Hint id="home_badge" emoji="📊">{lang==="de"?"Farbige Badges zeigen ob eine Station über oder unter dem Durchschnitt liegt.":"Colored badges show if a station is above or below average."}</Hint>
-      <Hint id="home_pwa" emoji="📱">{lang==="de"?"Für App-Feeling: Safari → Teilen (⬆) → \"Zum Home-Bildschirm\". Öffnet wie eine echte App!":"For app experience: Safari → Share (⬆) → \"Add to Home Screen\". Opens like a real app!"}</Hint>
+      {!isStandalone&&isIOS&&!dismissedHints.includes("home_pwa")&&(
+        <div className="fade-up" style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderRadius:12,background:C.glass,border:`1px solid ${C.glassBorder}`,marginBottom:8,cursor:"pointer"}} onClick={()=>setShowPWAGuide(true)}>
+          <span style={{fontSize:24}}>📱</span>
+          <div style={{flex:1}}>
+            <div style={{fontWeight:700,fontSize:13}}>{lang==="de"?"Als App installieren":"Install as App"}</div>
+            <div style={{color:C.muted,fontSize:11,marginTop:1}}>{lang==="de"?"3 Schritte — tippe hier für Anleitung":"3 steps — tap here for guide"}</div>
+          </div>
+          <div style={{color:C.green,fontSize:12,fontWeight:600}}>→</div>
+        </div>
+      )}
       <div style={s.grid}>
         <div style={s.card}>
           <div style={s.cardT}>{t("cheapest",lang)} · {fuel.toUpperCase()}</div>
@@ -1366,7 +1476,7 @@ function TankRadar(){
   // ─── MAP ────────────────────────────────────────────────────
   const renderMap=()=>(
     <div style={{display:"flex",flexDirection:"column",gap:12}}>
-      <div ref={mapRef} style={{height:"min(480px, 60vh)",borderRadius:12,border:`1px solid ${C.border}`}}/>
+      <div ref={mapContainerRef} style={{height:"min(480px, 60vh)",borderRadius:12,border:`1px solid ${C.border}`}}/>
       <div style={{color:C.muted,fontSize:11,textAlign:"center"}}>{validStations.length} {t("stations",lang)} · {loc.name} · {rad} km</div>
     </div>
   );
@@ -2073,6 +2183,7 @@ function TankRadar(){
   return(
     <div style={{minHeight:"100vh",paddingBottom:110}}>
       <DetailModal/>
+      <PWAGuideModal/>
       {/* HEADER — compact */}
       <div style={s.header}>
         <div style={s.logo}>
@@ -2088,7 +2199,8 @@ function TankRadar(){
         {tab==="home"&&renderDashboard()}
         {tab==="prices"&&(
           <div>
-            {renderStations()}
+            <SubToggle options={[{id:"list",label:lang==="de"?"Liste":"List"},{id:"map",label:lang==="de"?"Karte":"Map"}]} value={subView} onChange={setSubView}/>
+            {subView==="list"?renderStations():renderMap()}
           </div>
         )}
         {tab==="forecast"&&(
