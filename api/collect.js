@@ -110,9 +110,9 @@ export default async function handler(req, res) {
             }));
 
           if (brentRows.length > 0) {
-            // Upsert — ignore conflicts on unique(period)
+            // Upsert — on_conflict=period skips existing dates
             const brentRes = await fetch(
-              `${SUPABASE_URL}/rest/v1/brent_history`,
+              `${SUPABASE_URL}/rest/v1/brent_history?on_conflict=period`,
               {
                 method: "POST",
                 headers: {
