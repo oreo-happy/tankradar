@@ -93,7 +93,48 @@ export default async function handler(req, res) {
       }
     }
 
-    // ═══ 2. FETCH BRENT FROM EIA (once per run) ═══════════════
+    // ═══ 2. FETCH BRENT — Yahoo Finance (real-time) + EIA (historical) ═══
+    const brentResults = { yahoo: null, eia: null };
+
+    // 2a. Yahoo Finance — real-time Brent futures (BZ=F)
+    try {
+      const yUrl = "https://query1.finance.yahoo.com/v8/finance/chart/BZ=F?range=3mo&interval=1d";
+      const yRes = await fetch(yUrl, {
+        headers: { "User-Agent": "TankRadar/1.0" },
+      });
+      const yData = await yRes.json();
+      const quotes = yData?.chart?.result?.[0];
+      if (quotes?.timestamp?.length > 0) {
+        const ts = quotes.timestamp;
+        const closes = quotes.indicators?.quote?.[0]?.close || [];
+        const yRows = [];
+        for (let i = 0; i < ts.length; i++) {
+          const price = closes[i];
+          if (!price || price <= 0) continue;
+          const d = new Date(ts[i] * 1000);
+          const period = d.toISOString().slice(0, 10);
+          yRows.push({ price: +price.toFixed(2), currency: "USD", period });
+        }
+        if (yRows.length > 0) {
+          const yInsert = await fetch(
+            `${SUPABASE_URL}/rest/v1/brent_history?on_conflict=period`,
+            {
+              method: "POST",
+              headers: { ...headers, "Prefer": "return=minimal,resolution=merge-duplicates" },
+              body: JSON.stringify(yRows),
+            }
+          );
+          const latest = yRows[yRows.length - 1];
+          brentResults.yahoo = yInsert.ok
+            ? `${yRows.length} days, latest: $${latest.price} (${latest.period})`
+            : `insert error: ${yInsert.status}`;
+        }
+      }
+    } catch (e) {
+      brentResults.yahoo = `error: ${e.message}`;
+    }
+
+    // 2b. EIA — authoritative historical backfill (3-5 day delay)
     if (EIA_KEY) {
       try {
         const eiaUrl = `https://api.eia.gov/v2/petroleum/pri/spt/data/?api_key=${EIA_KEY}&data[]=value&facets[series][]=RBRTE&frequency=daily&sort[0][column]=period&sort[0][direction]=desc&length=90`;
@@ -110,33 +151,25 @@ export default async function handler(req, res) {
             }));
 
           if (brentRows.length > 0) {
-            // Upsert — on_conflict=period skips existing dates
             const brentRes = await fetch(
               `${SUPABASE_URL}/rest/v1/brent_history?on_conflict=period`,
               {
                 method: "POST",
-                headers: {
-                  ...headers,
-                  "Prefer": "return=minimal,resolution=ignore-duplicates",
-                },
+                headers: { ...headers, "Prefer": "return=minimal,resolution=ignore-duplicates" },
                 body: JSON.stringify(brentRows),
               }
             );
-            if (brentRes.ok) {
-              results.brent = `${brentRows.length} days fetched, latest: $${brentRows[0].price} (${brentRows[0].period})`;
-            } else {
-              results.errors.push(`Brent insert: ${brentRes.status} ${await brentRes.text()}`);
-            }
+            brentResults.eia = brentRes.ok
+              ? `${brentRows.length} days, latest: $${brentRows[0].price} (${brentRows[0].period})`
+              : `insert error: ${brentRes.status}`;
           }
-        } else {
-          results.brent = "No EIA data returned";
         }
       } catch (e) {
-        results.errors.push(`Brent fetch error: ${e.message}`);
+        brentResults.eia = `error: ${e.message}`;
       }
-    } else {
-      results.brent = "No EIA_API_KEY configured";
     }
+
+    results.brent = brentResults;
 
     return res.status(200).json({ ok: true, timestamp: now, ...results });
   } catch (e) {
