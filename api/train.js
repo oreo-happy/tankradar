@@ -374,9 +374,236 @@ export default async function handler(req, res) {
       stats.errors.push(`Model save error: ${upsertRes.status} ${errText}`);
     }
 
+    // ─── 5. FORECAST FEEDBACK LOOP ─────────────────────────────
+    const forecastStats = { saved: 0, evaluated: 0, backtested: 0 };
+
+    try {
+      // Build daily actual averages for e10 (our benchmark fuel)
+      const actualByDay = {};
+      for (const row of allData) {
+        if (row.fuel_type !== "e10") continue;
+        const day = row.fetched_at.slice(0, 10);
+        if (!actualByDay[day]) actualByDay[day] = [];
+        actualByDay[day].push(parseFloat(row.price));
+      }
+      const dailyActuals = {};
+      for (const [day, prices] of Object.entries(actualByDay)) {
+        dailyActuals[day] = +(prices.reduce((a, b) => a + b, 0) / prices.length).toFixed(3);
+      }
+      const actualDates = Object.keys(dailyActuals).sort();
+
+      // Helper: predict price for a given date using current model
+      const predictForDate = (dateStr) => {
+        const d = new Date(dateStr + "T12:00:00Z");
+        const dow = (d.getUTCDay() + 6) % 7; // Mon=0
+        const hBest = +(globalHourlyAvg[19] || 0); // best hour ~19:00
+        const hWorst = +(globalHourlyAvg[6] || 0);  // worst hour ~6:00
+        const hAvg = +(globalHourlyAvg[12] || 0);   // midday as avg proxy
+        const dDelta = +(globalDailyAvg[dow] || 0);
+
+        // Vacation check
+        let vacDelta = 0;
+        for (const vd of vacDates) {
+          const diff = (vd - d.getTime()) / 86400000;
+          if (diff >= -1 && diff <= 5) { vacDelta = 4; break; }
+        }
+
+        const base = marketAvg;
+        return {
+          avg: +(base + (hAvg + dDelta + vacDelta) / 100).toFixed(3),
+          best: +(base + (hBest + dDelta + vacDelta) / 100).toFixed(3),
+          worst: +(base + (hWorst + dDelta + vacDelta) / 100).toFixed(3),
+        };
+      };
+
+      // 5a. SAVE CURRENT 14-DAY FORECAST ─────────────────────────
+      const today = new Date().toISOString().slice(0, 10);
+      const forecastRows = [];
+      for (let i = 0; i <= 14; i++) {
+        const fd = new Date();
+        fd.setDate(fd.getDate() + i);
+        const dateStr = fd.toISOString().slice(0, 10);
+        const pred = predictForDate(dateStr);
+        forecastRows.push({
+          forecast_date: dateStr,
+          fuel_type: "e10",
+          predicted_avg: pred.avg,
+          predicted_best: pred.best,
+          predicted_worst: pred.worst,
+          horizon_days: i,
+          model_version: `v${fullModel.version}_${today}`,
+        });
+      }
+
+      if (forecastRows.length > 0) {
+        const fcRes = await fetch(
+          `${SUPABASE_URL}/rest/v1/forecast_snapshots?on_conflict=forecast_date,fuel_type,horizon_days`,
+          {
+            method: "POST",
+            headers: { ...headers, "Prefer": "return=minimal,resolution=merge-duplicates" },
+            body: JSON.stringify(forecastRows),
+          }
+        );
+        if (fcRes.ok) forecastStats.saved = forecastRows.length;
+        else stats.errors.push(`Forecast save: ${fcRes.status} ${await fcRes.text()}`);
+      }
+
+      // 5b. BACKTEST — evaluate past predictions against actuals ──
+      // Fetch unevaluated snapshots where we now have actual data
+      const unevalRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/forecast_snapshots?actual_avg=is.null&fuel_type=eq.e10&order=forecast_date.asc&limit=500`,
+        { headers }
+      );
+      const unevalRows = await unevalRes.json();
+
+      if (Array.isArray(unevalRows)) {
+        const updates = [];
+        for (const row of unevalRows) {
+          const actual = dailyActuals[row.forecast_date];
+          if (actual) {
+            const errorCt = +((row.predicted_avg - actual) * 100).toFixed(2);
+            updates.push({
+              id: row.id,
+              actual_avg: actual,
+              error_ct: errorCt,
+              evaluated_at: new Date().toISOString(),
+            });
+          }
+        }
+
+        // Batch update evaluated rows
+        for (const u of updates) {
+          await fetch(
+            `${SUPABASE_URL}/rest/v1/forecast_snapshots?id=eq.${u.id}`,
+            {
+              method: "PATCH",
+              headers: { ...headers, "Prefer": "return=minimal" },
+              body: JSON.stringify({
+                actual_avg: u.actual_avg,
+                error_ct: u.error_ct,
+                evaluated_at: u.evaluated_at,
+              }),
+            }
+          );
+        }
+        forecastStats.evaluated = updates.length;
+      }
+
+      // 5c. BACKTEST HISTORICAL — reconstruct predictions for days
+      // where we have actual data but never saved a forecast
+      if (actualDates.length >= 3) {
+        const backRows = [];
+        for (let i = 0; i < actualDates.length; i++) {
+          const dateStr = actualDates[i];
+          const actual = dailyActuals[dateStr];
+          const pred = predictForDate(dateStr);
+          const errorCt = +((pred.avg - actual) * 100).toFixed(2);
+
+          // Simulate different horizons (0=same day, 1=1 day ahead, etc)
+          for (const hz of [0, 1, 3, 7]) {
+            if (i >= hz) {
+              backRows.push({
+                forecast_date: dateStr,
+                fuel_type: "e10",
+                predicted_avg: pred.avg,
+                predicted_best: pred.best,
+                predicted_worst: pred.worst,
+                actual_avg: actual,
+                error_ct: errorCt,
+                horizon_days: hz,
+                model_version: `backtest_${today}`,
+                evaluated_at: new Date().toISOString(),
+              });
+            }
+          }
+        }
+
+        if (backRows.length > 0) {
+          const btRes = await fetch(
+            `${SUPABASE_URL}/rest/v1/forecast_snapshots?on_conflict=forecast_date,fuel_type,horizon_days`,
+            {
+              method: "POST",
+              headers: { ...headers, "Prefer": "return=minimal,resolution=ignore-duplicates" },
+              body: JSON.stringify(backRows),
+            }
+          );
+          if (btRes.ok) forecastStats.backtested = backRows.length;
+          else stats.errors.push(`Backtest save: ${btRes.status}`);
+        }
+      }
+
+      // 5d. COMPUTE ACCURACY & BIAS CORRECTIONS ──────────────────
+      // Fetch all evaluated forecasts
+      const evalRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/forecast_snapshots?error_ct=not.is.null&fuel_type=eq.e10&order=forecast_date.desc&limit=1000`,
+        { headers }
+      );
+      const evalRows = await evalRes.json();
+
+      if (Array.isArray(evalRows) && evalRows.length >= 3) {
+        // Accuracy by horizon
+        const byHorizon = {};
+        for (const r of evalRows) {
+          const hz = r.horizon_days;
+          if (!byHorizon[hz]) byHorizon[hz] = [];
+          byHorizon[hz].push(parseFloat(r.error_ct));
+        }
+
+        const accuracy = {};
+        for (const [hz, errors] of Object.entries(byHorizon)) {
+          const mae = +(errors.reduce((a, e) => a + Math.abs(e), 0) / errors.length).toFixed(2);
+          const bias = +(errors.reduce((a, e) => a + e, 0) / errors.length).toFixed(2);
+          accuracy[`${hz}d`] = { mae, bias, n: errors.length };
+        }
+
+        // Bias by day-of-week
+        const byDow = Array.from({ length: 7 }, () => []);
+        for (const r of evalRows) {
+          const d = new Date(r.forecast_date + "T12:00:00Z");
+          const dow = (d.getUTCDay() + 6) % 7;
+          byDow[dow].push(parseFloat(r.error_ct));
+        }
+        const dowBias = byDow.map(errors =>
+          errors.length >= 2
+            ? +(errors.reduce((a, e) => a + e, 0) / errors.length).toFixed(2)
+            : 0
+        );
+
+        // Overall accuracy
+        const allErrors = evalRows.map(r => parseFloat(r.error_ct));
+        const overallMAE = +(allErrors.reduce((a, e) => a + Math.abs(e), 0) / allErrors.length).toFixed(2);
+        const overallBias = +(allErrors.reduce((a, e) => a + e, 0) / allErrors.length).toFixed(2);
+
+        // Store in model
+        fullModel.accuracy = {
+          overall: { mae: overallMAE, bias: overallBias, n: allErrors.length },
+          byHorizon: accuracy,
+          dowBias,  // correction per day-of-week in ct (subtract from prediction)
+          lastEval: new Date().toISOString(),
+        };
+
+        // Re-save model with accuracy data
+        await fetch(
+          `${SUPABASE_URL}/rest/v1/ml_models?on_conflict=id`,
+          {
+            method: "POST",
+            headers: { ...headers, "Prefer": "resolution=merge-duplicates" },
+            body: JSON.stringify({
+              id: "price_model_v1",
+              model: fullModel,
+              trained_at: new Date().toISOString(),
+            }),
+          }
+        );
+      }
+    } catch (e) {
+      stats.errors.push(`Forecast loop error: ${e.message}`);
+    }
+
     return res.status(200).json({
       ok: true,
       ...stats,
+      forecast: forecastStats,
       modelSize: `${(stats.modelSize / 1024).toFixed(1)} KB`,
       preview: {
         marketAvg: fullModel.market.avg,
@@ -384,6 +611,7 @@ export default async function handler(req, res) {
         worstGlobalHours: globalHourlyAvg.map((d, h) => ({ h, d })).sort((a, b) => b.d - a.d).slice(0, 3).map(x => `${x.h}:00 (+${x.d}ct)`),
         bestDay: ["Mo","Di","Mi","Do","Fr","Sa","So"][globalDailyAvg.indexOf(Math.min(...globalDailyAvg))],
         worstDay: ["Mo","Di","Mi","Do","Fr","Sa","So"][globalDailyAvg.indexOf(Math.max(...globalDailyAvg))],
+        accuracy: fullModel.accuracy || "Not enough evaluated forecasts",
         sampleStation: Object.values(model)[0] ? {
           name: Object.values(model)[0].nm,
           avg: Object.values(model)[0].avg,
