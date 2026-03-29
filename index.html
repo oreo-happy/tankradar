@@ -781,7 +781,7 @@ function TankRadar(){
 
   // ─── FETCH OIL PRICE ──────────────────────────────────────────
   const [brentLoading,setBrentLoading]=useState(false);
-  const OIL_API_KEY="8e6bdc9cc3f5d5f5c3c353f91f6138635611d6dca2e78ff88a02231e4d55ce5b";
+  const OIL_API_KEY="";
   const fetchBrent=useCallback(async()=>{
     setBrentLoading(true);
     // 1. Fetch EUR/USD rate (Frankfurter API — free, no CORS issues)
