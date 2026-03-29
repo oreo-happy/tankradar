@@ -1667,6 +1667,12 @@ function TankRadar(){
     const mw=Math.min(...forecastData.slice(0,7).map(d=>d.best));
     const md=forecastData.slice(0,7).find(d=>d.best===mw);
     const fn=tb<=mw+.005;
+    // Smart fill: combine forecast with tank level
+    const rangeKm=tankAdvisor.rangeKm||0;
+    const daysUntilCheap=md?forecastData.indexOf(md):0;
+    const dailyKm=30; // rough estimate
+    const canWait=rangeKm>daysUntilCheap*dailyKm;
+    const savingsOnFull=+((tb-mw)*(tankSize||45)).toFixed(2);
     return(
       <div style={{display:"flex",flexDirection:"column",gap:12}}>
         <Hint id="fc_ml" emoji="🧠">{lang==="de"?`Prognosen basieren auf echten Daten von ${mlModel?.stations_trained||77} Stationen — keine Schätzungen.`:`Forecasts use real data from ${mlModel?.stations_trained||77} stations — not estimates.`}</Hint>
@@ -1674,9 +1680,18 @@ function TankRadar(){
         <div style={{...s.card,borderColor:fn?C.green:C.blue,background:fn?"rgba(16,185,129,.04)":"rgba(59,130,246,.04)"}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <div style={{width:40,height:40,borderRadius:10,background:fn?C.green:C.blue,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>{fn?"✓":"⏳"}</div>
-            <div><div style={{fontWeight:700,fontSize:16}}>{fn?t("fillNow",lang):`${t("wait",lang)} — ${md?.label} ${t("cheaper",lang)}`}</div>
-              <div style={{color:C.muted,fontSize:12}}>{fn?`~${fmt(tb)} €/L`:`~${fmt(mw)} €/L (${((tb-mw)*100).toFixed(1)} ct)`}</div>
+            <div>
+              <div style={{fontWeight:700,fontSize:16}}>{fn?t("fillNow",lang):`${t("wait",lang)} — ${md?.label} ${t("cheaper",lang)}`}</div>
+              <div style={{color:C.muted,fontSize:12}}>{fn?`~${fmt(tb)} €/L`:`~${fmt(mw)} €/L (${((tb-mw)*100).toFixed(1)} ct${savingsOnFull>0?` · ~${savingsOnFull}€ ${lang==="de"?"gespart":"saved"}`:""})` }</div>
             </div>
+          </div>
+          {!fn&&currentFuel>0&&(
+            <div style={{fontSize:11,color:canWait?C.green:C.amber,marginTop:8}}>
+              {canWait
+                ?(lang==="de"?`🔋 Reichweite ~${rangeKm}km — reicht bis ${md?.label}.`:`🔋 Range ~${rangeKm}km — enough until ${md?.label}.`)
+                :(lang==="de"?`⚠ Reichweite ~${rangeKm}km — evtl. vorher 10-15L nachtanken.`:`⚠ Range ~${rangeKm}km — consider topping up 10-15L first.`)}
+            </div>
+          )}
           </div>
         </div>
         {/* ACCURACY STATS */}
@@ -1750,6 +1765,96 @@ function TankRadar(){
             )}
           </div>
         )}
+        {/* PRICE DRIVERS — what moved prices */}
+        {mlModel?.drivers&&mlModel.drivers.breakdown?.length>0&&(
+          <div style={s.card}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <div style={s.cardT}>📊 {lang==="de"?"Preistreiber":"Price Drivers"}</div>
+              <span style={{fontSize:10,color:C.muted}}>{mlModel.drivers.period}</span>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+              <div style={{fontFamily:"JetBrains Mono,monospace",fontSize:22,fontWeight:800,color:mlModel.drivers.totalChangeCt>0?C.red:mlModel.drivers.totalChangeCt<0?C.green:C.text}}>
+                {mlModel.drivers.totalChangeCt>0?"+":""}{mlModel.drivers.totalChangeCt} ct/L
+              </div>
+              <span style={{color:C.muted,fontSize:12}}>{lang==="de"?"diese Woche":"this week"}</span>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {mlModel.drivers.breakdown.map((d,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:14,width:20,textAlign:"center"}}>{d.emoji}</span>
+                  <div style={{flex:1,fontSize:12}}>{d.name==="Vacation"?(lang==="de"?"Ferien":"Vacation"):d.name==="Other"?(lang==="de"?"Sonstiges":"Other"):d.name}</div>
+                  <div style={{fontFamily:"JetBrains Mono,monospace",fontSize:13,fontWeight:700,color:d.ct>0?C.red:d.ct<0?C.green:C.muted,minWidth:60,textAlign:"right"}}>
+                    {d.ct>0?"+":""}{d.ct} ct
+                  </div>
+                  <div style={{width:60,height:6,borderRadius:3,background:C.glass,overflow:"hidden"}}>
+                    <div style={{width:`${Math.min(100,Math.abs(d.ct)/Math.max(...mlModel.drivers.breakdown.map(x=>Math.abs(x.ct)))*100)}%`,height:"100%",borderRadius:3,background:d.ct>0?C.red:C.green}}/>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {/* EUR/USD & REFINERY MARGIN */}
+        {(mlModel?.forex||mlModel?.margin)&&(
+          <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+            {mlModel.forex&&(
+              <div style={{...s.card,flex:"1 1 140px"}}>
+                <div style={s.cardT}>💱 EUR/USD</div>
+                <div style={{fontFamily:"JetBrains Mono,monospace",fontSize:20,fontWeight:700}}>{mlModel.forex.current}</div>
+                <div style={{fontSize:11,color:mlModel.forex.change14d>0?C.green:mlModel.forex.change14d<0?C.red:C.muted,marginTop:4}}>
+                  {mlModel.forex.change14d>0?"+":""}{mlModel.forex.change14d}% (14d)
+                </div>
+                <div style={{fontSize:11,color:C.muted,marginTop:4}}>
+                  {lang==="de"?"Pump-Effekt":"Pump effect"}: <span style={{color:mlModel.forex.pumpImpact14dCt>0?C.red:mlModel.forex.pumpImpact14dCt<0?C.green:C.muted,fontWeight:700}}>
+                    {mlModel.forex.pumpImpact14dCt>0?"+":""}{mlModel.forex.pumpImpact14dCt} ct/L
+                  </span>
+                </div>
+              </div>
+            )}
+            {mlModel.margin&&(
+              <div style={{...s.card,flex:"1 1 140px",borderColor:mlModel.margin.status==="high"?C.red:mlModel.margin.status==="low"?C.green:C.border}}>
+                <div style={s.cardT}>💰 {lang==="de"?"Raffinerie-Marge":"Refinery Margin"}</div>
+                <div style={{fontFamily:"JetBrains Mono,monospace",fontSize:20,fontWeight:700,color:mlModel.margin.status==="high"?C.red:mlModel.margin.status==="low"?C.green:C.text}}>
+                  {mlModel.margin.currentCt>0?"+":""}{mlModel.margin.currentCt} ct/L
+                </div>
+                <div style={{fontSize:11,color:C.muted,marginTop:4}}>
+                  {lang==="de"?"Theoretisch":"Theoretical"}: {fmt(mlModel.margin.theoretical)} € → {lang==="de"?"Tatsächlich":"Actual"}: {fmt(mlModel.margin.actual)} €
+                </div>
+                {mlModel.margin.hint==="above_avg"&&(
+                  <div style={{fontSize:11,color:C.amber,marginTop:4}}>{lang==="de"?"⚠ Marge überdurchschnittlich — Preise könnten fallen":"⚠ Margin above average — prices may drop"}</div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+        {/* GEOPOLITICAL RISKS */}
+        {(()=>{
+          const events=[
+            {date:"2026-04-03",name:"OPEC+ Meeting",impact:lang==="de"?"±3-8ct für 1-2 Wochen":"±3-8ct for 1-2 weeks",emoji:"🏛"},
+            {date:"2026-05-05",name:"OPEC+ Review",impact:lang==="de"?"±2-5ct Volatilität":"±2-5ct volatility",emoji:"🏛"},
+            {date:"2026-06-01",name:lang==="de"?"Sommerfahrsaison":"Summer driving season",impact:lang==="de"?"+3-6ct saisonal":"+3-6ct seasonal",emoji:"☀️"},
+            {date:"2026-04-15",name:"IEA Oil Market Report",impact:lang==="de"?"±1-3ct kurzfristig":"±1-3ct short-term",emoji:"📊"},
+            {date:"2026-04-10",name:"US CPI Release",impact:lang==="de"?"USD Volatilität → ±1-2ct":"USD volatility → ±1-2ct",emoji:"🇺🇸"},
+          ];
+          const upcoming=events.filter(e=>new Date(e.date)>=new Date()&&new Date(e.date)<=new Date(Date.now()+30*86400000)).sort((a,b)=>a.date.localeCompare(b.date));
+          if(upcoming.length===0)return null;
+          return(
+            <div style={s.card}>
+              <div style={s.cardT}>⚠ {lang==="de"?"Marktrisiken":"Market Risks"}</div>
+              <div style={{fontSize:11,color:C.muted,marginBottom:8}}>{lang==="de"?"Bevorstehende Ereignisse die Preise beeinflussen können":"Upcoming events that may affect prices"}</div>
+              {upcoming.map((ev,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderBottom:i<upcoming.length-1?`1px solid ${C.border}`:"none"}}>
+                  <span style={{fontSize:16}}>{ev.emoji}</span>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:600,fontSize:12}}>{ev.name}</div>
+                    <div style={{fontSize:11,color:C.muted}}>{ev.impact}</div>
+                  </div>
+                  <div style={{fontFamily:"monospace",fontSize:11,color:C.dim}}>{new Date(ev.date).toLocaleDateString(lang==="de"?"de-DE":"en-US",{day:"2-digit",month:"short"})}</div>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
         <div style={s.card}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <div style={s.cardT}>{t("forecast14",lang)} — {fuel.toUpperCase()}</div>
