@@ -784,34 +784,17 @@ function TankRadar(){
   const OIL_API_KEY="8e6bdc9cc3f5d5f5c3c353f91f6138635611d6dca2e78ff88a02231e4d55ce5b";
   const fetchBrent=useCallback(async()=>{
     setBrentLoading(true);
-    // 1. Fetch EUR/USD rate
+    // 1. Fetch EUR/USD rate (Frankfurter API — free, no CORS issues)
     try{const r=await fetch("https://api.frankfurter.app/latest?from=USD&to=EUR");const d=await r.json();if(d.rates?.EUR)S.set("usd_eur",String(d.rates.EUR))}catch{}
-    let price=null;
-    // 2. Primary: OilPriceAPI (Brent spot)
-    try{
-      const r=await fetch("https://api.oilpriceapi.com/v1/prices/latest?by_code=BRENT_CRUDE_USD",{headers:{"Authorization":`Token ${OIL_API_KEY}`,"Content-Type":"application/json"}});
-      const d=await r.json();
-      if(d.status==="success"&&d.data?.price>10&&d.data?.price<300)price=d.data.price;
-    }catch{}
-    // 3. Fallback: ECB
-    if(!price){try{
-      const r=await fetch("https://data-api.ecb.europa.eu/service/data/FM/M.U2.EUR.4F.BB.AC.A01.B.HSTA?format=csvdata&lastNObservations=1");
-      const txt=await r.text();const lines=txt.trim().split("\n");
-      if(lines.length>=2){const last=lines[lines.length-1].split(",");const val=parseFloat(last[last.length-1]);if(val>20&&val<200)price=val}
-    }catch{}}
-    // 4. Fallback: World Bank
-    if(!price){try{
-      const r=await fetch("https://api.worldbank.org/v2/country/all/indicator/CRUDE_BRENT?date=2024:2026&format=json&per_page=5&MRV=1");
-      const d=await r.json();if(d[1]&&d[1][0]&&d[1][0].value)price=d[1][0].value;
-    }catch{}}
-    if(price&&price>10&&price<300){
+    // 2. Use Brent from ML model (fetched by backend via Yahoo Finance + EIA)
+    if(mlModel?.brent?.latest?.price){
+      const price=mlModel.brent.latest.price;
       setBrent(+price.toFixed(2));setBrentAuto(true);
-      const ts=new Date().toISOString();
-      setBrentTs(ts);S.set("brent",String(price.toFixed(2)));S.set("brent_ts",ts);
+      setBrentTs(mlModel.brent.latest.date);S.set("brent",String(price.toFixed(2)));S.set("brent_ts",mlModel.brent.latest.date);
     }
     setBrentLoading(false);
-  },[]);
-  useEffect(()=>{fetchBrent()},[]);
+  },[mlModel]);
+  useEffect(()=>{fetchBrent()},[mlModel]);
 
   // ─── LOAD ML MODEL ──────────────────────────────────────────
   const [mlModel,setMlModel]=useState(null);
@@ -1799,9 +1782,9 @@ function TankRadar(){
             {mlModel.forex&&(
               <div style={{...s.card,flex:"1 1 140px"}}>
                 <div style={s.cardT}>💱 EUR/USD</div>
-                <div style={{fontFamily:"JetBrains Mono,monospace",fontSize:20,fontWeight:700}}>{mlModel.forex.current}</div>
-                <div style={{fontSize:11,color:mlModel.forex.change14d>0?C.green:mlModel.forex.change14d<0?C.red:C.muted,marginTop:4}}>
-                  {mlModel.forex.change14d>0?"+":""}{mlModel.forex.change14d}% (14d)
+                <div style={{fontFamily:"JetBrains Mono,monospace",fontSize:20,fontWeight:700}}>{(1/mlModel.forex.current).toFixed(4)}</div>
+                <div style={{fontSize:11,color:mlModel.forex.change14d<0?C.green:mlModel.forex.change14d>0?C.red:C.muted,marginTop:4}}>
+                  {-mlModel.forex.change14d>0?"+":""}{(-mlModel.forex.change14d).toFixed(2)}% (14d)
                 </div>
                 <div style={{fontSize:11,color:C.muted,marginTop:4}}>
                   {lang==="de"?"Pump-Effekt":"Pump effect"}: <span style={{color:mlModel.forex.pumpImpact14dCt>0?C.red:mlModel.forex.pumpImpact14dCt<0?C.green:C.muted,fontWeight:700}}>
@@ -1892,7 +1875,7 @@ function TankRadar(){
             <div style={{fontSize:16,color:C.dim}}>×</div>
             <div>
               <div style={{color:C.muted,fontSize:11,marginBottom:3}}>EUR/USD</div>
-              <div style={{fontFamily:"monospace",fontSize:14,fontWeight:600}}>{oilImpact.usdEur}</div>
+              <div style={{fontFamily:"monospace",fontSize:14,fontWeight:600}}>{(1/oilImpact.usdEur).toFixed(4)}</div>
             </div>
             <div style={{fontSize:16,color:C.dim}}>=</div>
             <div>
