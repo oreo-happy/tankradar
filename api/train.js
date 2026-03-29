@@ -215,7 +215,20 @@ export default async function handler(req, res) {
       stations: model,
     };
 
-    // ─── 3b. BRENT CORRELATION & LAG ANALYSIS ──────────────────
+    // ─── 3b. DAILY PUMP AVERAGES (shared scope) ────────────────
+    const pumpByDay = {};
+    for (const row of allData) {
+      if (row.fuel_type !== "e10") continue;
+      const day = row.fetched_at.slice(0, 10);
+      if (!pumpByDay[day]) pumpByDay[day] = [];
+      pumpByDay[day].push(parseFloat(row.price));
+    }
+    const dailyPump = {};
+    for (const [day, prices] of Object.entries(pumpByDay)) {
+      dailyPump[day] = +(prices.reduce((a, b) => a + b, 0) / prices.length).toFixed(3);
+    }
+
+    // ─── 3c. BRENT CORRELATION & LAG ANALYSIS ──────────────────
     try {
       // Fetch Brent history
       const brentRes = await fetch(
@@ -225,18 +238,6 @@ export default async function handler(req, res) {
       const brentData = await brentRes.json();
 
       if (Array.isArray(brentData) && brentData.length >= 7) {
-        // Build daily pump price averages
-        const pumpByDay = {};
-        for (const row of allData) {
-          if (row.fuel_type !== "e10") continue; // use e10 as benchmark
-          const day = row.fetched_at.slice(0, 10);
-          if (!pumpByDay[day]) pumpByDay[day] = [];
-          pumpByDay[day].push(parseFloat(row.price));
-        }
-        const dailyPump = {};
-        for (const [day, prices] of Object.entries(pumpByDay)) {
-          dailyPump[day] = +(prices.reduce((a, b) => a + b, 0) / prices.length).toFixed(3);
-        }
 
         // Build Brent daily map
         const dailyBrent = {};
@@ -349,6 +350,139 @@ export default async function handler(req, res) {
       }
     } catch (e) {
       stats.errors.push(`Brent analysis error: ${e.message}`);
+    }
+
+    // ─── 3c. FOREX IMPACT & PRICE DRIVERS ──────────────────────
+    try {
+      // Fetch 30-day EUR/USD history from Frankfurter API
+      const fx30ago = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+      const fxToday = new Date().toISOString().slice(0, 10);
+      const fxHistRes = await fetch(`https://api.frankfurter.app/${fx30ago}..${fxToday}?from=USD&to=EUR`);
+      const fxHistData = await fxHistRes.json();
+
+      if (fxHistData?.rates) {
+        const fxDates = Object.keys(fxHistData.rates).sort();
+        const fxLatest = fxHistData.rates[fxDates[fxDates.length - 1]]?.EUR || 0.92;
+        const fx14ago = fxDates.length >= 14 ? (fxHistData.rates[fxDates[fxDates.length - 14]]?.EUR || fxLatest) : fxLatest;
+        const fx30start = fxHistData.rates[fxDates[0]]?.EUR || fxLatest;
+
+        // EUR/USD impact on fuel price (ct/L)
+        // If EUR weakens (fewer EUR per USD), fuel costs more
+        const brentPrice = fullModel.brent?.latest?.price || 100;
+        const fxImpact14d = +((brentPrice / 159) * (1/fxLatest - 1/fx14ago) * 1.19 * 100).toFixed(1);
+        const fxImpact30d = +((brentPrice / 159) * (1/fxLatest - 1/fx30start) * 1.19 * 100).toFixed(1);
+        const eurUsdChange14d = +(((fxLatest - fx14ago) / fx14ago) * 100).toFixed(2);
+
+        fullModel.forex = {
+          current: +fxLatest.toFixed(4),
+          change14d: eurUsdChange14d,          // % change in EUR/USD
+          pumpImpact14dCt: fxImpact14d,        // ct/L impact from forex alone
+          pumpImpact30dCt: fxImpact30d,
+          direction: fxImpact14d > 0.5 ? "weakening" : fxImpact14d < -0.5 ? "strengthening" : "stable",
+        };
+
+        // ─── PRICE DRIVERS DECOMPOSITION ────────────────────────
+        // Compute what drove prices this week vs last week
+        const pumpDates = Object.keys(dailyPump || {}).sort();
+        if (pumpDates.length >= 7) {
+          const recent3 = pumpDates.slice(-3);
+          const prior3 = pumpDates.slice(-7, -4);
+          const recentAvg = recent3.reduce((a, d) => a + (dailyPump[d] || 0), 0) / recent3.length;
+          const priorAvg = prior3.reduce((a, d) => a + (dailyPump[d] || 0), 0) / prior3.length;
+          const totalChange = +((recentAvg - priorAvg) * 100).toFixed(1); // ct
+
+          // Decompose: Brent contribution
+          const brentRecent = fullModel.brent?.latest?.price || 0;
+          const dailyBrentMap = {};
+          try {
+            const bRes = await fetch(`${SUPABASE_URL}/rest/v1/brent_history?order=period.desc&limit=14`, { headers });
+            const bData = await bRes.json();
+            if (Array.isArray(bData)) bData.forEach(b => { dailyBrentMap[b.period] = parseFloat(b.price); });
+          } catch {}
+
+          const brentDatesRecent = recent3.map(d => dailyBrentMap[d]).filter(Boolean);
+          const brentDatesPrior = prior3.map(d => dailyBrentMap[d]).filter(Boolean);
+          const brentContrib = (brentDatesRecent.length > 0 && brentDatesPrior.length > 0)
+            ? +(((brentDatesRecent.reduce((a, b) => a + b, 0) / brentDatesRecent.length) -
+                 (brentDatesPrior.reduce((a, b) => a + b, 0) / brentDatesPrior.length)) * fxLatest / 159 * 1.19 * 100).toFixed(1)
+            : 0;
+
+          // Vacation contribution
+          const isVacNow = vacDates.some(vd => Math.abs(Date.now() - vd) < 7 * 86400000);
+          const wasVacPrior = vacDates.some(vd => {
+            const priorTs = new Date(prior3[1] || prior3[0]).getTime();
+            return Math.abs(priorTs - vd) < 7 * 86400000;
+          });
+          const vacContrib = isVacNow && !wasVacPrior ? 4 : !isVacNow && wasVacPrior ? -4 : 0;
+
+          // Forex contribution (already computed)
+          const fxContrib = fxImpact14d;
+
+          // Residual = unexplained
+          const residual = +(totalChange - brentContrib - vacContrib - fxContrib).toFixed(1);
+
+          fullModel.drivers = {
+            totalChangeCt: totalChange,
+            breakdown: [
+              { name: "Brent", ct: brentContrib, emoji: "🛢" },
+              { name: "EUR/USD", ct: +fxContrib.toFixed(1), emoji: "💱" },
+              { name: "Vacation", ct: vacContrib, emoji: "🏖" },
+              { name: "Other", ct: residual, emoji: "📊" },
+            ].filter(d => Math.abs(d.ct) >= 0.1),
+            period: `${prior3[0]} → ${recent3[recent3.length - 1]}`,
+          };
+        }
+
+        // ─── REFINERY MARGIN ────────────────────────────────────
+        // Theoretical vs actual = margin
+        const usdEurNow = fxLatest;
+        const brentEurPerL = (brentPrice * usdEurNow) / 159;
+        const theoretical = (brentEurPerL * 1.15 + (0.6545 + 0.0865 + 0.10)) * 1.19; // with taxes
+        const actualPump = marketAvg;
+        const currentMargin = +((actualPump - theoretical) * 100).toFixed(1); // ct/L
+
+        fullModel.margin = {
+          currentCt: currentMargin,
+          theoretical: +theoretical.toFixed(3),
+          actual: actualPump,
+          status: currentMargin > 15 ? "high" : currentMargin > 8 ? "normal" : "low",
+          hint: currentMargin > 15 ? "above_avg" : currentMargin < 5 ? "below_avg" : "normal",
+        };
+      }
+    } catch (e) {
+      stats.errors.push(`Forex/drivers error: ${e.message}`);
+    }
+
+    // ─── 3d. SEASONAL PATTERN ──────────────────────────────────
+    try {
+      // Use Brent 90-day data to detect monthly trend
+      const brentMonthly = {};
+      const bHistRes = await fetch(`${SUPABASE_URL}/rest/v1/brent_history?order=period.asc&limit=90`, { headers });
+      const bHistData = await bHistRes.json();
+      if (Array.isArray(bHistData)) {
+        for (const b of bHistData) {
+          const month = b.period.slice(0, 7); // YYYY-MM
+          if (!brentMonthly[month]) brentMonthly[month] = [];
+          brentMonthly[month].push(parseFloat(b.price));
+        }
+      }
+      const monthlyAvgs = {};
+      for (const [m, prices] of Object.entries(brentMonthly)) {
+        monthlyAvgs[m] = +(prices.reduce((a, b) => a + b, 0) / prices.length).toFixed(2);
+      }
+      const months = Object.keys(monthlyAvgs).sort();
+      if (months.length >= 2) {
+        const latestMonth = months[months.length - 1];
+        const priorMonth = months[months.length - 2];
+        const monthlyTrend = +((monthlyAvgs[latestMonth] - monthlyAvgs[priorMonth]) / monthlyAvgs[priorMonth] * 100).toFixed(1);
+        fullModel.seasonal = {
+          monthlyBrent: monthlyAvgs,
+          trend: monthlyTrend,
+          direction: monthlyTrend > 2 ? "rising" : monthlyTrend < -2 ? "falling" : "stable",
+        };
+      }
+    } catch (e) {
+      stats.errors.push(`Seasonal error: ${e.message}`);
     }
 
     const modelJson = JSON.stringify(fullModel);
