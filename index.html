@@ -639,8 +639,13 @@ function TankRadar(){
   const [mapReady,setMapReady]=useState(false);
   const mapContainerRef=useCallback(node=>{
     mapRef.current=node;
-    if(node)setMapReady(true);
-    else setMapReady(false);
+    if(node){
+      // Clear any previous Leaflet instance on this DOM node
+      if(node._leaflet_id){delete node._leaflet_id}
+      setMapReady(true);
+    }else{
+      setMapReady(false);
+    }
   },[]);
 
   const C=THEMES[theme];
@@ -877,19 +882,21 @@ function TankRadar(){
   const mlDaily=mlModel?.market?.daily_ct||DAILY_DELTA.map(d=>d*100? d*100/100:d);
   const isMLActive=!!mlModel?.trained_at;
 
+  // Bias corrections from forecast feedback loop
+  const dowBias=mlModel?.accuracy?.dowBias||Array(7).fill(0);
+  const modelAccuracy=mlModel?.accuracy||null;
+
   const fcDeltaML=(date,hour=12)=>{
     const d=typeof date==="string"?toDate(date):new Date(date);
     const dow=(d.getDay()+6)%7;
-    // Use ML model values (already in ct) or fallback (also in ct for hardcoded)
     const hDelta=isMLActive?(mlHourly[hour]||0):HOURLY_DELTA[hour];
     const dDelta=isMLActive?(mlDaily[dow]||0):DAILY_DELTA[dow];
     let delta=hDelta+dDelta;
-    // Vacation/holiday surcharge — use ML sensitivity if available
+    // Apply learned bias correction (subtract systematic over/under prediction)
+    if(isMLActive&&dowBias[dow])delta-=dowBias[dow];
+    // Vacation/holiday surcharge
     const v=vacProx(d);
-    if(v.vac&&v.days>=-2&&v.days<=3){
-      // If ML model, we could use per-station sensitivity, but for market forecast use +4 default
-      delta+=isMLActive?4:4;
-    }
+    if(v.vac&&v.days>=-2&&v.days<=3)delta+=isMLActive?4:4;
     const h=holProx(d);
     if(h&&h.days>=-1&&h.days<=0)delta+=5;
     return delta;
@@ -997,33 +1004,40 @@ function TankRadar(){
   // ─── MAP EFFECT ─────────────────────────────────────────────
   useEffect(()=>{
     if(!(tab==="prices"&&subView==="map")||!mapReady||!mapRef.current||!L)return;
-    // Destroy old instance if exists (prevents "already initialized" error)
-    if(mapInst.current){try{mapInst.current.remove()}catch(e){};mapInst.current=null;markersRef.current=[]}
-    // Create fresh map
-    const map=L.map(mapRef.current,{zoomControl:true}).setView([loc.lat,loc.lng],rad<=5?14:rad<=10?13:rad<=15?12:11);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{attribution:'© OSM',maxZoom:18}).addTo(map);
-    mapInst.current=map;
-    // Center marker
-    const cm=L.circleMarker([loc.lat,loc.lng],{radius:8,color:C.blue,fillColor:C.blue,fillOpacity:0.5,weight:2}).addTo(map);
-    cm.bindTooltip(loc.name,{permanent:false});markersRef.current.push(cm);
-    // Radius circle
-    const rc=L.circle([loc.lat,loc.lng],{radius:rad*1000,color:C.amber,fillColor:C.amber,fillOpacity:0.03,weight:1,dashArray:"5,5"}).addTo(map);
-    markersRef.current.push(rc);
-    // Station markers
-    const stList=demo?DEMO_STATIONS:stations;
-    stList.forEach(st=>{
-      if(!st.lat||!st.lng)return;
-      const hasP=typeof st.price==="number"&&st.price>0;
-      const priceText=hasP?fmt(st.price):"—";
-      const color=!st.isOpen?"#666":!hasP?"#666":st===cheapest?C.green:C.text;
-      const bg=!st.isOpen?"#333":!hasP?"#333":st===cheapest?"#065f46":C.cardSolid;
-      const icon=L.divIcon({className:"price-marker",html:`<div class="price-label" style="background:${bg};color:${color};border:1px solid ${C.border}">${priceText}</div>`,iconSize:[54,22],iconAnchor:[27,11]});
-      const m=L.marker([st.lat,st.lng],{icon}).addTo(map);
-      m.bindPopup(`<div style="font-family:Outfit,sans-serif;font-size:13px"><strong>${st.brand||""} ${st.name}</strong><br/>${st.street||""} ${st.houseNumber||""}, ${st.place||""}<br/><span style="font-family:JetBrains Mono,monospace;font-size:16px;font-weight:700;color:${color}">${priceText} €</span><br/><span style="font-size:11px;color:${C.muted}">${st.dist?.toFixed(1)} km · ${st.isOpen?t("open",lang):t("closed",lang)}</span></div>`,{className:"station-popup"});
-      markersRef.current.push(m);
-    });
-    setTimeout(()=>map.invalidateSize(),50);
-    return()=>{try{map.remove()}catch(e){};mapInst.current=null;markersRef.current=[]};
+    // Small delay to ensure DOM is fully painted
+    const timer=setTimeout(()=>{
+      try{
+        // Destroy old instance
+        if(mapInst.current){try{mapInst.current.remove()}catch(e){};mapInst.current=null;markersRef.current=[]}
+        // Clear leaflet ID from container
+        if(mapRef.current._leaflet_id)delete mapRef.current._leaflet_id;
+        // Create fresh map
+        const map=L.map(mapRef.current,{zoomControl:true}).setView([loc.lat,loc.lng],rad<=5?14:rad<=10?13:rad<=15?12:11);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{attribution:'© OSM',maxZoom:18}).addTo(map);
+        mapInst.current=map;
+        // Center marker
+        const cm=L.circleMarker([loc.lat,loc.lng],{radius:8,color:C.blue,fillColor:C.blue,fillOpacity:0.5,weight:2}).addTo(map);
+        cm.bindTooltip(loc.name,{permanent:false});markersRef.current.push(cm);
+        // Radius circle
+        const rc=L.circle([loc.lat,loc.lng],{radius:rad*1000,color:C.amber,fillColor:C.amber,fillOpacity:0.03,weight:1,dashArray:"5,5"}).addTo(map);
+        markersRef.current.push(rc);
+        // Station markers
+        const stList=demo?DEMO_STATIONS:stations;
+        stList.forEach(st=>{
+          if(!st.lat||!st.lng)return;
+          const hasP=typeof st.price==="number"&&st.price>0;
+          const priceText=hasP?fmt(st.price):"—";
+          const color=!st.isOpen?"#666":!hasP?"#666":st===cheapest?C.green:C.text;
+          const bg=!st.isOpen?"#333":!hasP?"#333":st===cheapest?"#065f46":C.cardSolid;
+          const icon=L.divIcon({className:"price-marker",html:`<div class="price-label" style="background:${bg};color:${color};border:1px solid ${C.border}">${priceText}</div>`,iconSize:[54,22],iconAnchor:[27,11]});
+          const m=L.marker([st.lat,st.lng],{icon}).addTo(map);
+          m.bindPopup(`<div style="font-family:Outfit,sans-serif;font-size:13px"><strong>${st.brand||""} ${st.name}</strong><br/>${st.street||""} ${st.houseNumber||""}, ${st.place||""}<br/><span style="font-family:JetBrains Mono,monospace;font-size:16px;font-weight:700;color:${color}">${priceText} €</span><br/><span style="font-size:11px;color:${C.muted}">${st.dist?.toFixed(1)} km · ${st.isOpen?t("open",lang):t("closed",lang)}</span></div>`,{className:"station-popup"});
+          markersRef.current.push(m);
+        });
+        setTimeout(()=>map.invalidateSize(),100);
+      }catch(e){console.error("Map init error:",e)}
+    },200);
+    return()=>{clearTimeout(timer);if(mapInst.current){try{mapInst.current.remove()}catch(e){};mapInst.current=null;markersRef.current=[]}};
   },[tab,subView,mapReady,stations,demo,loc,rad,theme,cheapest]);
 
   // ─── STYLES ─────────────────────────────────────────────────
@@ -1665,6 +1679,38 @@ function TankRadar(){
             </div>
           </div>
         </div>
+        {/* ACCURACY STATS */}
+        {modelAccuracy&&modelAccuracy.overall?.n>=3&&(
+          <div style={s.card}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+              <div style={s.cardT}>🎯 {lang==="de"?"Prognose-Genauigkeit":"Forecast Accuracy"}</div>
+              <span style={{...s.badge(modelAccuracy.overall.mae<=3?C.green:modelAccuracy.overall.mae<=6?C.amber:C.red),fontSize:9}}>
+                ±{modelAccuracy.overall.mae} ct/L
+              </span>
+            </div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
+              {["0d","1d","3d","7d"].map(hz=>{
+                const acc=modelAccuracy.byHorizon?.[hz];
+                if(!acc)return null;
+                const label={de:{["0d"]:"Heute",["1d"]:"1 Tag",["3d"]:"3 Tage",["7d"]:"7 Tage"},en:{["0d"]:"Today",["1d"]:"1 Day",["3d"]:"3 Days",["7d"]:"7 Days"}};
+                return(
+                  <div key={hz} style={{flex:"1 1 60px",padding:8,borderRadius:8,background:C.glass,textAlign:"center"}}>
+                    <div style={{fontSize:9,color:C.muted,marginBottom:2}}>{(label[lang]||label.de)[hz]}</div>
+                    <div style={{fontFamily:"JetBrains Mono,monospace",fontSize:16,fontWeight:700,color:acc.mae<=2?C.green:acc.mae<=5?C.amber:C.red}}>±{acc.mae}</div>
+                    <div style={{fontSize:8,color:C.dim}}>ct/L · n={acc.n}</div>
+                  </div>
+                );
+              })}
+            </div>
+            {modelAccuracy.overall.bias!==0&&(
+              <div style={{fontSize:11,color:C.muted}}>
+                {modelAccuracy.overall.bias>0
+                  ?(lang==="de"?`Tendenz: Prognose ${modelAccuracy.overall.bias} ct zu hoch — wird korrigiert.`:`Tendency: forecast ${modelAccuracy.overall.bias} ct too high — correcting.`)
+                  :(lang==="de"?`Tendenz: Prognose ${Math.abs(modelAccuracy.overall.bias)} ct zu niedrig — wird korrigiert.`:`Tendency: forecast ${Math.abs(modelAccuracy.overall.bias)} ct too low — correcting.`)}
+              </div>
+            )}
+          </div>
+        )}
         {/* BRENT TREND PREDICTION */}
         {mlModel?.brent&&(
           <div style={{...s.card,borderColor:mlModel.brent.direction==="rising"?C.red:mlModel.brent.direction==="falling"?C.green:C.border}}>
