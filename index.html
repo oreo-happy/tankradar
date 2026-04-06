@@ -1052,7 +1052,7 @@ function TankRadar(){
 
   // ─── ROUTE MAP EFFECT ────────────────────────────────────────
   useEffect(()=>{
-    if(!(tab==="prices"&&subView==="route")||!routeData||!routeMapRef.current||!L)return;
+    if(!(tab==="prices"&&subView==="route")||!routeData||!routeMapReady||!routeMapRef.current||!L)return;
     const timer=setTimeout(()=>{
       try{
         if(routeMapInst.current){try{routeMapInst.current.remove()}catch(e){};routeMapInst.current=null}
@@ -1084,7 +1084,7 @@ function TankRadar(){
       }catch(e){console.error("Route map error:",e)}
     },200);
     return()=>{clearTimeout(timer);if(routeMapInst.current){try{routeMapInst.current.remove()}catch(e){};routeMapInst.current=null}};
-  },[tab,subView,routeData,detourFilter,theme]);
+  },[tab,subView,routeData,routeMapReady,detourFilter,theme]);
 
   // ─── STYLES ─────────────────────────────────────────────────
   const s={
@@ -1126,6 +1126,12 @@ function TankRadar(){
   const [detourFilter,setDetourFilter]=useState(5); // km
   const routeMapRef=useRef(null);
   const routeMapInst=useRef(null);
+  const [routeMapReady,setRouteMapReady]=useState(false);
+  const routeMapCbRef=useCallback(node=>{
+    routeMapRef.current=node;
+    if(node){if(node._leaflet_id)delete node._leaflet_id;setRouteMapReady(true)}
+    else setRouteMapReady(false);
+  },[]);
   // Map filter
   const [mapFilter,setMapFilter]=useState("all");
 
@@ -1138,22 +1144,56 @@ function TankRadar(){
     }catch{}
   };
 
+  const haversineKm=(lat1,lon1,lat2,lon2)=>{const R=6371;const dLat=(lat2-lat1)*Math.PI/180;const dLon=(lon2-lon1)*Math.PI/180;const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a))};
+
   const planRoute=async()=>{
     if(!routeDestCoords)return;
-    setRouteLoading(true);setRouteError("");setRouteData(null);
+    setRouteLoading(true);setRouteError("");setRouteData(null);setRouteMapReady(false);
     try{
-      // Use GPS for start, fallback to saved location
       let startLat=loc.lat,startLng=loc.lng;
-      if(navigator.geolocation){
-        try{
-          const pos=await new Promise((res,rej)=>navigator.geolocation.getCurrentPosition(res,rej,{timeout:5000}));
-          startLat=pos.coords.latitude;startLng=pos.coords.longitude;
-        }catch{}
-      }
+      if(navigator.geolocation){try{const pos=await new Promise((res,rej)=>navigator.geolocation.getCurrentPosition(res,rej,{timeout:5000}));startLat=pos.coords.latitude;startLng=pos.coords.longitude}catch{}}
+      // 1. Get route geometry from backend
       const r=await fetch(`/api/route?start_lat=${startLat}&start_lng=${startLng}&end_lat=${routeDestCoords.lat}&end_lng=${routeDestCoords.lng}&fuel=${fuel}`);
       const d=await r.json();
-      if(d.ok)setRouteData(d);
-      else setRouteError(d.error||"Route not found");
+      if(!d.ok){setRouteError(d.error||"Route not found");setRouteLoading(false);return}
+      // 2. Sample points along route for station search
+      const coords=d.route.coords; // [[lat,lng],...]
+      const numSamples=Math.min(8,Math.max(2,Math.ceil(d.route.distance/30)));
+      const samplePts=[];
+      for(let i=0;i<numSamples;i++){
+        const idx=Math.round(i/(numSamples-1)*(coords.length-1));
+        samplePts.push(coords[idx]);
+      }
+      // 3. Query Tankerkönig from browser for each sample point
+      const seenIds=new Set();
+      const routeStations=[];
+      const fuelParam=fuel==="e5"?"e5":fuel==="diesel"?"diesel":"e10";
+      for(const pt of samplePts){
+        try{
+          const tkUrl=`https://creativecommons.tankerkoenig.de/json/list.php?lat=${pt[0]}&lng=${pt[1]}&rad=10&sort=dist&type=${fuelParam}&apikey=${apiKey}`;
+          const tkR=await fetch(tkUrl);
+          const tkD=await tkR.json();
+          if(tkD.ok&&tkD.stations){
+            for(const st of tkD.stations){
+              if(seenIds.has(st.id)||!st.isOpen||typeof st.price!=="number"||st.price<=0)continue;
+              seenIds.add(st.id);
+              // Find closest point on route
+              let minDist=Infinity;let nearIdx=0;
+              const step=Math.max(1,Math.floor(coords.length/80));
+              for(let j=0;j<coords.length;j+=step){const dd=haversineKm(st.lat,st.lng,coords[j][0],coords[j][1]);if(dd<minDist){minDist=dd;nearIdx=j}}
+              // Refine
+              for(let j=Math.max(0,nearIdx-step);j<=Math.min(coords.length-1,nearIdx+step);j++){const dd=haversineKm(st.lat,st.lng,coords[j][0],coords[j][1]);if(dd<minDist)minDist=dd}
+              const detourKm=+(minDist*2).toFixed(1);
+              if(detourKm>20)continue;
+              const speed=st.place?.length>3?30:60;
+              const detourMin=Math.ceil(detourKm/speed*60);
+              routeStations.push({...st,detourKm,detourMin,routeProgress:Math.round(nearIdx/coords.length*100)});
+            }
+          }
+        }catch{}
+      }
+      routeStations.sort((a,b)=>a.price-b.price);
+      setRouteData({...d,stations:routeStations.slice(0,30),totalFound:routeStations.length});
     }catch(e){setRouteError(e.message)}
     setRouteLoading(false);
   };
@@ -2578,7 +2618,7 @@ function TankRadar(){
                       ))}
                     </div>
                     {/* Route map */}
-                    <div ref={routeMapRef} style={{height:"min(400px, 50vh)",borderRadius:14,border:`1px solid ${C.glassBorder}`}}/>
+                    <div ref={routeMapCbRef} style={{height:"min(400px, 50vh)",borderRadius:14,border:`1px solid ${C.glassBorder}`}}/>
                     {/* Station list below map */}
                     <div style={s.card}>
                       <div style={s.cardT}>{lang==="de"?"Günstigste auf der Strecke":"Cheapest on route"} · {fuel.toUpperCase()}</div>
