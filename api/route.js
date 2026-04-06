@@ -5,10 +5,9 @@ export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
 
   const ORS_KEY = process.env.ORS_API_KEY;
-  const TK_KEY = process.env.TANKERKOENIG_KEY;
 
-  if (!ORS_KEY || !TK_KEY) {
-    return res.status(500).json({ error: "Missing ORS_API_KEY or TANKERKOENIG_KEY" });
+  if (!ORS_KEY) {
+    return res.status(500).json({ error: "Missing ORS_API_KEY" });
   }
 
   const { start_lat, start_lng, end_lat, end_lng, fuel = "e10" } = req.query;
@@ -89,15 +88,11 @@ export default async function handler(req, res) {
     return res.status(200).json({
       ok: true,
       route: {
-        distance: Math.round(totalDistance / 1000), // km
-        duration: Math.round(totalDuration / 60),    // minutes
+        distance: Math.round(totalDistance / 1000),
+        duration: Math.round(totalDuration / 60),
         coords: simplifiedRoute,
       },
-      stations: dedupedStations.slice(0, 20), // top 20 cheapest
-      fuel: fuelParam,
-      totalFound: dedupedStations.length,
-      samplePoints: samplePoints.length,
-      tkErrors: tkErrors.length > 0 ? tkErrors : undefined,
+      samplePoints: samplePoints.map(p => [+p.lat.toFixed(4), +p.lng.toFixed(4)]),
     });
   } catch (e) {
     return res.status(500).json({ error: e.message });
