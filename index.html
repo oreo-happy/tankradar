@@ -926,7 +926,27 @@ function TankRadar(){
 
   const historyData=useMemo(()=>{
     const hist=S.json(`hist_${fuel}`,[]);
-    return hist.slice(-100).map(h=>({time:new Date(h.ts).toLocaleDateString("de-DE",{day:"2-digit",month:"2-digit"}),avg:h.avg,min:h.min}));
+    if(hist.length<2)return[];
+    // Aggregate by day: one point per date
+    const byDay={};
+    for(const h of hist){
+      const d=new Date(h.ts).toISOString().slice(0,10);
+      if(!byDay[d])byDay[d]={avgs:[],mins:[]};
+      byDay[d].avgs.push(h.avg);
+      if(h.min)byDay[d].mins.push(h.min);
+    }
+    return Object.entries(byDay).sort(([a],[b])=>a.localeCompare(b)).map(([date,v])=>{
+      const avgOfAvgs=+(v.avgs.reduce((a,b)=>a+b,0)/v.avgs.length).toFixed(3);
+      const minOfMins=v.mins.length>0?Math.min(...v.mins):avgOfAvgs;
+      const d=new Date(date+"T12:00:00");
+      return{
+        time:`${d.getDate()}.${d.getMonth()+1}.`,
+        date,
+        avg:avgOfAvgs,
+        min:+minOfMins.toFixed(3),
+        n:v.avgs.length,
+      };
+    });
   },[fuel,lastFetch]);
 
   // ─── SHARE ──────────────────────────────────────────────────
@@ -2004,19 +2024,56 @@ function TankRadar(){
 
   // ─── HISTORY ────────────────────────────────────────────────
   const renderHistory=()=>(
-    <div style={s.card}>
-      <div style={s.cardT}>{t("priceHistory",lang)} — {fuel.toUpperCase()}</div>
-      {historyData.length<2?<div style={{color:C.muted,fontSize:12,padding:20,textAlign:"center"}}>{t("noHistory",lang)}</div>:(
-        <ResponsiveContainer width="100%" height={280}>
-          <LineChart data={historyData} margin={{top:10,right:10,bottom:5,left:-15}}>
-            <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
-            <XAxis dataKey="time" tick={{fill:C.muted,fontSize:9}}/>
-            <YAxis tick={{fill:C.muted,fontSize:9}} domain={["dataMin-.02","dataMax+.02"]} tickFormatter={v=>v.toFixed(2)}/>
-            <Tooltip contentStyle={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,fontSize:11}} formatter={(v,n)=>[fmt(v)+" €/L",n==="avg"?t("average",lang):"Min"]}/>
-            <Line type="monotone" dataKey="avg" stroke={C.amber} strokeWidth={2} dot={false}/>
-            <Line type="monotone" dataKey="min" stroke={C.green} strokeWidth={1.5} strokeDasharray="4 4" dot={false}/>
-          </LineChart>
-        </ResponsiveContainer>
+    <div style={{display:"flex",flexDirection:"column",gap:12}}>
+      <div style={s.card}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <div style={s.cardT}>{t("priceHistory",lang)} — {fuel.toUpperCase()}</div>
+          {historyData.length>0&&<span style={{fontSize:10,color:C.dim}}>{historyData.length} {lang==="de"?"Tage":"days"}</span>}
+        </div>
+        {historyData.length<2?<div style={{color:C.muted,fontSize:12,padding:20,textAlign:"center"}}>{t("noHistory",lang)}</div>:(
+          <div>
+            <ResponsiveContainer width="100%" height={220}>
+              <AreaChart data={historyData} margin={{top:5,right:5,bottom:5,left:-15}}>
+                <defs>
+                  <linearGradient id="gHist" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={C.amber} stopOpacity={.15}/><stop offset="95%" stopColor={C.amber} stopOpacity={0}/></linearGradient>
+                  <linearGradient id="gHistMin" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={C.green} stopOpacity={.1}/><stop offset="95%" stopColor={C.green} stopOpacity={0}/></linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
+                <XAxis dataKey="time" tick={{fill:C.muted,fontSize:10}} interval={Math.max(0,Math.floor(historyData.length/7)-1)}/>
+                <YAxis tick={{fill:C.muted,fontSize:10}} domain={["dataMin-.02","dataMax+.02"]} tickFormatter={v=>v.toFixed(2)}/>
+                <Tooltip contentStyle={{background:C.cardSolid,border:`1px solid ${C.border}`,borderRadius:10,fontSize:12}} formatter={(v,n)=>[fmt(v)+" €/L",n==="avg"?(lang==="de"?"Ø Preis":"Avg Price"):(lang==="de"?"Günstigste":"Cheapest")]} labelFormatter={l=>`${l}`}/>
+                <Area type="monotone" dataKey="avg" stroke={C.amber} strokeWidth={2.5} fill="url(#gHist)" dot={{r:3,fill:C.amber,strokeWidth:0}}/>
+                <Area type="monotone" dataKey="min" stroke={C.green} strokeWidth={1.5} fill="url(#gHistMin)" strokeDasharray="4 3" dot={{r:2,fill:C.green,strokeWidth:0}}/>
+              </AreaChart>
+            </ResponsiveContainer>
+            <div style={{display:"flex",justifyContent:"center",gap:16,marginTop:6}}>
+              <div style={{display:"flex",alignItems:"center",gap:4,fontSize:10,color:C.muted}}>
+                <div style={{width:12,height:3,borderRadius:2,background:C.amber}}/> {lang==="de"?"Ø Tagespreis":"Avg daily price"}
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:4,fontSize:10,color:C.muted}}>
+                <div style={{width:12,height:3,borderRadius:2,background:C.green,opacity:.7}}/> {lang==="de"?"Günstigste":"Cheapest"}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+      {historyData.length>=2&&(
+        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+          <div style={{...s.card,flex:"1 1 100px",textAlign:"center"}}>
+            <div style={{fontSize:10,color:C.muted,marginBottom:2}}>{lang==="de"?"Heute":"Today"}</div>
+            <div style={{fontFamily:"JetBrains Mono,monospace",fontSize:18,fontWeight:700}}>{fmt(historyData[historyData.length-1]?.avg||0)}</div>
+          </div>
+          <div style={{...s.card,flex:"1 1 100px",textAlign:"center"}}>
+            <div style={{fontSize:10,color:C.muted,marginBottom:2}}>{lang==="de"?"Günstigste":"Cheapest"}</div>
+            <div style={{fontFamily:"JetBrains Mono,monospace",fontSize:18,fontWeight:700,color:C.green}}>{fmt(Math.min(...historyData.map(h=>h.min)))}</div>
+          </div>
+          <div style={{...s.card,flex:"1 1 100px",textAlign:"center"}}>
+            <div style={{fontSize:10,color:C.muted,marginBottom:2}}>{lang==="de"?"Veränderung":"Change"}</div>
+            {(()=>{const ch=+((historyData[historyData.length-1]?.avg-historyData[0]?.avg)*100).toFixed(1);return(
+              <div style={{fontFamily:"JetBrains Mono,monospace",fontSize:18,fontWeight:700,color:ch>0?C.red:ch<0?C.green:C.text}}>{ch>0?"+":""}{ch} ct</div>
+            )})()}
+          </div>
+        </div>
       )}
     </div>
   );
