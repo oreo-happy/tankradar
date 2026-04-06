@@ -1270,7 +1270,7 @@ function TankRadar(){
       </div>
     );
   };
-  const APP_VERSION="2.7";
+  const APP_VERSION="2.8";
   const [dismissedHints,setDismissedHints]=useState(()=>S.json("hints_dismissed",[]));
   const [versionSeen,setVersionSeen]=useState(()=>S.get("version_seen")||"");
   const dismissHint=(id)=>{const next=[...dismissedHints,id];setDismissedHints(next);S.set("hints_dismissed",JSON.stringify(next))};
@@ -1292,7 +1292,7 @@ function TankRadar(){
         <span style={{fontSize:14}}>🆕</span>
         <div style={{flex:1}}>
           <div style={{fontWeight:700,fontSize:13}}>v{APP_VERSION}</div>
-          <div style={{fontSize:11,color:C.muted,marginTop:1}}>{lang==="de"?"iOS-Installationsguide · Kontexthilfen · Brent-Prognose · Heatmap":"iOS install guide · Contextual hints · Brent forecast · Heatmap"}</div>
+          <div style={{fontSize:11,color:C.muted,marginTop:1}}>{lang==="de"?"Neue Tankregel ab 1.4.: Preiserhöhung nur 1x täglich um 12 Uhr. Unser Modell lernt die neuen Muster automatisch.":"New fuel rule from April 1: Price increases only once daily at 12pm. Our model adapts automatically."}</div>
         </div>
         <div onClick={dismissVersion} style={{cursor:"pointer",color:C.green,fontSize:11,flexShrink:0,padding:"4px 8px",borderRadius:6,background:C.glass}}>✕</div>
       </div>
@@ -1526,6 +1526,7 @@ function TankRadar(){
   const renderPatterns=()=>(
     <div style={{display:"flex",flexDirection:"column",gap:12}}>
       <Hint id="heatmap_tap" emoji="🗓">{lang==="de"?"Grün = günstig, Rot = teuer. Tippe eine Zelle für geschätzten Preis.":"Green = cheap, Red = expensive. Tap any cell for estimated price."}</Hint>
+      <Hint id="heatmap_12uhr" emoji="📋">{lang==="de"?"Neue Regel seit 1.4.: Muster ändern sich — Heatmap lernt automatisch die neuen Zeiten.":"New rule since April 1: Patterns are shifting — heatmap adapts automatically."}</Hint>
       {/* HEATMAP */}
       <div style={s.card}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
@@ -1660,6 +1661,7 @@ function TankRadar(){
       <div style={{display:"flex",flexDirection:"column",gap:12}}>
         <Hint id="fc_ml" emoji="🧠">{lang==="de"?`Prognosen basieren auf echten Daten von ${mlModel?.stations_trained||77} Stationen — keine Schätzungen.`:`Forecasts use real data from ${mlModel?.stations_trained||77} stations — not estimates.`}</Hint>
         <Hint id="fc_brent" emoji="🛢">{lang==="de"?"Ölpreise steigen schnell an der Zapfsäule, fallen aber langsam. Wir tracken beide Verzögerungen.":"Oil prices rise fast at the pump but drop slowly. We track both lags."}</Hint>
+        <Hint id="fc_12uhr" emoji="⚠">{lang==="de"?"Seit 1. April: Preise steigen nur noch um 12 Uhr. Vor 12 Uhr tanken — abends günstig durch Wettbewerb.":"Since April 1: Prices only rise at 12pm. Fill up before noon — evenings cheap due to competition."}</Hint>
         <div style={{...s.card,borderColor:fn?C.green:C.blue,background:fn?"rgba(16,185,129,.04)":"rgba(59,130,246,.04)"}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <div style={{width:40,height:40,borderRadius:10,background:fn?C.green:C.blue,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>{fn?"✓":"⏳"}</div>
