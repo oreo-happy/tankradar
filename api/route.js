@@ -72,84 +72,8 @@ export default async function handler(req, res) {
       }
     }
 
-    // ─── 3. QUERY TANKERKÖNIG FOR EACH SAMPLE POINT ─────────────
-    const seenIds = new Set();
-    const allStations = [];
-    const fuelParam = fuel === "e5" ? "e5" : fuel === "diesel" ? "diesel" : "e10";
-    const tkErrors = [];
-
-    // Query sequentially to avoid rate limiting, larger radius
-    for (const pt of samplePoints) {
-      try {
-        const url = `https://creativecommons.tankerkoenig.de/json/list.php?lat=${pt.lat.toFixed(4)}&lng=${pt.lng.toFixed(4)}&rad=10&sort=dist&type=${fuelParam}&apikey=${TK_KEY}`;
-        const r = await fetch(url);
-        const d = await r.json();
-        if (d.ok && d.stations) {
-          for (const st of d.stations) allStations.push(st);
-        } else {
-          tkErrors.push(d.message || "unknown error");
-        }
-      } catch (e) {
-        tkErrors.push(e.message);
-      }
-    }
-
-    // Deduplicate and process stations
-    const dedupedStations = [];
-    for (const st of allStations) {
-        if (seenIds.has(st.id)) continue;
-        seenIds.add(st.id);
-        if (typeof st.price !== "number" || st.price <= 0) continue;
-        if (!st.isOpen) continue;
-
-        // Calculate distance from station to nearest point on route
-        let minDist = Infinity;
-        let nearestIdx = 0;
-        // Sample every 10th coord for performance
-        const step = Math.max(1, Math.floor(coords.length / 100));
-        for (let i = 0; i < coords.length; i += step) {
-          const d = haversine(st.lat, st.lng, coords[i][1], coords[i][0]);
-          if (d < minDist) { minDist = d; nearestIdx = i; }
-        }
-
-        // Refine around nearest
-        const lo = Math.max(0, nearestIdx - step);
-        const hi = Math.min(coords.length - 1, nearestIdx + step);
-        for (let i = lo; i <= hi; i++) {
-          const d = haversine(st.lat, st.lng, coords[i][1], coords[i][0]);
-          if (d < minDist) minDist = d;
-        }
-
-        const detourKm = +(minDist * 2 / 1000).toFixed(1); // there and back
-        // Skip stations more than 5km off route (10km round trip)
-        if (detourKm > 10) continue;
-
-        // Estimate detour time
-        const isCity = st.place && (st.place.length > 3); // rough heuristic
-        const speed = isCity ? 30 : 60; // kph
-        const detourMin = Math.ceil(detourKm / speed * 60);
-
-        // Progress along route (0-100%)
-        const routeProgress = Math.round(nearestIdx / coords.length * 100);
-
-        dedupedStations.push({
-          id: st.id,
-          name: st.name,
-          brand: st.brand || "",
-          place: st.place || "",
-          price: st.price,
-          lat: st.lat,
-          lng: st.lng,
-          street: st.street || "",
-          houseNumber: st.houseNumber || "",
-          detourKm,
-          detourMin,
-          routeProgress,
-        });
-    }
-
-    // Sort by price
-    dedupedStations.sort((a, b) => a.price - b.price);
+    // ─── 3. RETURN ROUTE + SAMPLE POINTS ──────────────────────
+    // Frontend will query Tankerkönig for each sample point (works from browser)
 
     // ─── 4. SIMPLIFY ROUTE FOR FRONTEND MAP ─────────────────────
     // Reduce coordinate count for frontend rendering
