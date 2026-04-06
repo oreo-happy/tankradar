@@ -76,21 +76,27 @@ export default async function handler(req, res) {
     const seenIds = new Set();
     const allStations = [];
     const fuelParam = fuel === "e5" ? "e5" : fuel === "diesel" ? "diesel" : "e10";
+    const tkErrors = [];
 
-    // Query in parallel (max 10 concurrent)
-    const tkPromises = samplePoints.map(async (pt) => {
+    // Query sequentially to avoid rate limiting, larger radius
+    for (const pt of samplePoints) {
       try {
-        const url = `https://creativecommons.tankerkoenig.de/json/list.php?lat=${pt.lat}&lng=${pt.lng}&rad=5&sort=price&type=${fuelParam}&apikey=${TK_KEY}`;
+        const url = `https://creativecommons.tankerkoenig.de/json/list.php?lat=${pt.lat.toFixed(4)}&lng=${pt.lng.toFixed(4)}&rad=10&sort=dist&type=${fuelParam}&apikey=${TK_KEY}`;
         const r = await fetch(url);
         const d = await r.json();
-        if (d.ok && d.stations) return d.stations;
-      } catch {}
-      return [];
-    });
+        if (d.ok && d.stations) {
+          for (const st of d.stations) allStations.push(st);
+        } else {
+          tkErrors.push(d.message || "unknown error");
+        }
+      } catch (e) {
+        tkErrors.push(e.message);
+      }
+    }
 
-    const results = await Promise.all(tkPromises);
-    for (const stations of results) {
-      for (const st of stations) {
+    // Deduplicate and process stations
+    const dedupedStations = [];
+    for (const st of allStations) {
         if (seenIds.has(st.id)) continue;
         seenIds.add(st.id);
         if (typeof st.price !== "number" || st.price <= 0) continue;
@@ -126,7 +132,7 @@ export default async function handler(req, res) {
         // Progress along route (0-100%)
         const routeProgress = Math.round(nearestIdx / coords.length * 100);
 
-        allStations.push({
+        dedupedStations.push({
           id: st.id,
           name: st.name,
           brand: st.brand || "",
@@ -140,11 +146,10 @@ export default async function handler(req, res) {
           detourMin,
           routeProgress,
         });
-      }
     }
 
     // Sort by price
-    allStations.sort((a, b) => a.price - b.price);
+    dedupedStations.sort((a, b) => a.price - b.price);
 
     // ─── 4. SIMPLIFY ROUTE FOR FRONTEND MAP ─────────────────────
     // Reduce coordinate count for frontend rendering
@@ -164,9 +169,11 @@ export default async function handler(req, res) {
         duration: Math.round(totalDuration / 60),    // minutes
         coords: simplifiedRoute,
       },
-      stations: allStations.slice(0, 20), // top 20 cheapest
+      stations: dedupedStations.slice(0, 20), // top 20 cheapest
       fuel: fuelParam,
-      totalFound: allStations.length,
+      totalFound: dedupedStations.length,
+      samplePoints: samplePoints.length,
+      tkErrors: tkErrors.length > 0 ? tkErrors : undefined,
     });
   } catch (e) {
     return res.status(500).json({ error: e.message });
