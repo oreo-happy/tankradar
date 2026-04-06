@@ -104,32 +104,47 @@ export default async function handler(req, res) {
 
     const model = {};
 
+    // Recency weight: post-April 1 2026 regulation data gets 3x weight
+    const REGULATION_DATE = new Date("2026-04-01T00:00:00Z").getTime();
+    const recencyWeight = (ts) => ts >= REGULATION_DATE ? 3 : 1;
+
     for (const [key, data] of Object.entries(stationMap)) {
       if (data.prices.length < 10) continue; // need minimum data
 
-      const prices = data.prices.map(p => p.price);
-      const avg = prices.reduce((a, b) => a + b, 0) / prices.length;
-
-      // Hourly deltas
-      const hourBuckets = Array.from({ length: 24 }, () => []);
+      // Weighted average
+      let totalWeight = 0, weightedSum = 0;
       for (const p of data.prices) {
-        hourBuckets[p.hour].push(p.price - avg);
+        const w = recencyWeight(p.ts);
+        weightedSum += p.price * w;
+        totalWeight += w;
+      }
+      const avg = totalWeight > 0 ? weightedSum / totalWeight : 0;
+
+      // Hourly deltas (weighted)
+      const hourBuckets = Array.from({ length: 24 }, () => ({ sum: 0, weight: 0 }));
+      for (const p of data.prices) {
+        const w = recencyWeight(p.ts);
+        hourBuckets[p.hour].sum += (p.price - avg) * w;
+        hourBuckets[p.hour].weight += w;
       }
       const hourlyDelta = hourBuckets.map(b =>
-        b.length > 0 ? +(b.reduce((a, v) => a + v, 0) / b.length).toFixed(4) : 0
+        b.weight > 0 ? +(b.sum / b.weight).toFixed(4) : 0
       );
 
-      // Daily deltas (Mon=0)
-      const dayBuckets = Array.from({ length: 7 }, () => []);
+      // Daily deltas (Mon=0, weighted)
+      const dayBuckets = Array.from({ length: 7 }, () => ({ sum: 0, weight: 0 }));
       for (const p of data.prices) {
-        dayBuckets[p.dow].push(p.price - avg);
+        const w = recencyWeight(p.ts);
+        dayBuckets[p.dow].sum += (p.price - avg) * w;
+        dayBuckets[p.dow].weight += w;
       }
       const dailyDelta = dayBuckets.map(b =>
-        b.length > 0 ? +(b.reduce((a, v) => a + v, 0) / b.length).toFixed(4) : 0
+        b.weight > 0 ? +(b.sum / b.weight).toFixed(4) : 0
       );
 
       // Volatility (standard deviation)
-      const variance = prices.reduce((a, p) => a + Math.pow(p - avg, 2), 0) / prices.length;
+      const allPrices = data.prices.map(p => p.price);
+      const variance = allPrices.reduce((a, p) => a + Math.pow(p - avg, 2), 0) / allPrices.length;
       const volatility = +Math.sqrt(variance).toFixed(4);
 
       // Vacation sensitivity
@@ -153,8 +168,8 @@ export default async function handler(req, res) {
       const worstHours = hourAvgs.slice(-3).map(x => x.h);
 
       // Price range
-      const minPrice = Math.min(...prices);
-      const maxPrice = Math.max(...prices);
+      const minPrice = Math.min(...allPrices);
+      const maxPrice = Math.max(...allPrices);
 
       model[key] = {
         sid: data.station_id,
