@@ -1050,6 +1050,42 @@ function TankRadar(){
     return()=>{clearTimeout(timer);if(mapInst.current){try{mapInst.current.remove()}catch(e){};mapInst.current=null;markersRef.current=[]}};
   },[tab,subView,mapReady,stations,demo,loc,rad,theme,cheapest]);
 
+  // ─── ROUTE MAP EFFECT ────────────────────────────────────────
+  useEffect(()=>{
+    if(!(tab==="prices"&&subView==="route")||!routeData||!routeMapRef.current||!L)return;
+    const timer=setTimeout(()=>{
+      try{
+        if(routeMapInst.current){try{routeMapInst.current.remove()}catch(e){};routeMapInst.current=null}
+        if(routeMapRef.current._leaflet_id)delete routeMapRef.current._leaflet_id;
+        const map=L.map(routeMapRef.current,{zoomControl:true});
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{attribution:'© OSM',maxZoom:18}).addTo(map);
+        routeMapInst.current=map;
+        // Draw route polyline
+        const routeLine=L.polyline(routeData.route.coords,{color:C.green,weight:4,opacity:.7}).addTo(map);
+        map.fitBounds(routeLine.getBounds(),{padding:[30,30]});
+        // Start/end markers
+        const startCoord=routeData.route.coords[0];
+        const endCoord=routeData.route.coords[routeData.route.coords.length-1];
+        L.circleMarker(startCoord,{radius:8,color:C.green,fillColor:C.green,fillOpacity:1,weight:2}).addTo(map).bindTooltip("Start",{permanent:true,direction:"top",className:"station-popup"});
+        L.circleMarker(endCoord,{radius:8,color:C.red,fillColor:C.red,fillOpacity:1,weight:2}).addTo(map).bindTooltip(routeDest.split(",")[0],{permanent:true,direction:"top",className:"station-popup"});
+        // Station markers filtered by detour
+        const filtered=routeData.stations.filter(st=>st.detourKm<=detourFilter*2);
+        const minP=filtered.length>0?Math.min(...filtered.map(st=>st.price)):0;
+        const maxP=filtered.length>0?Math.max(...filtered.map(st=>st.price)):0;
+        filtered.forEach((st,i)=>{
+          const norm=maxP>minP?(st.price-minP)/(maxP-minP):0;
+          const color=norm<.33?C.green:norm<.66?C.amber:C.red;
+          const bg=norm<.33?(theme==="dark"?"#065f46":"#d1fae5"):norm<.66?(theme==="dark"?"#78350f":"#fef3c7"):(theme==="dark"?"#7f1d1d":"#fecaca");
+          const icon=L.divIcon({className:"price-marker",html:`<div class="price-label" style="background:${bg};color:${color};border:1px solid ${C.border};font-size:12px;padding:3px 8px">${fmt(st.price)}</div>`,iconSize:[60,24],iconAnchor:[30,12]});
+          const m=L.marker([st.lat,st.lng],{icon}).addTo(map);
+          m.bindPopup(`<div style="font-family:Outfit,sans-serif;font-size:13px"><strong>${st.brand} ${st.name}</strong><br/>${st.street} ${st.houseNumber}, ${st.place}<br/><span style="font-family:JetBrains Mono,monospace;font-size:18px;font-weight:700;color:${color}">${fmt(st.price)} €</span><br/><span style="font-size:11px;color:#999">+${st.detourKm}km Umweg (~${st.detourMin}min)</span><br/><a href="https://www.google.com/maps/dir/?api=1&destination=${st.lat},${st.lng}" target="_blank" style="color:${C.green};font-weight:700;text-decoration:none">🧭 Navigieren</a></div>`,{className:"station-popup"});
+        });
+        setTimeout(()=>map.invalidateSize(),100);
+      }catch(e){console.error("Route map error:",e)}
+    },200);
+    return()=>{clearTimeout(timer);if(routeMapInst.current){try{routeMapInst.current.remove()}catch(e){};routeMapInst.current=null}};
+  },[tab,subView,routeData,detourFilter,theme]);
+
   // ─── STYLES ─────────────────────────────────────────────────
   const s={
     header:{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",borderBottom:`1px solid ${C.border}`,flexWrap:"wrap",gap:8,background:theme==="dark"?"rgba(8,8,10,.95)":"rgba(255,255,255,.9)",backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)"},
@@ -1087,6 +1123,9 @@ function TankRadar(){
   const [routeLoading,setRouteLoading]=useState(false);
   const [routeData,setRouteData]=useState(null);
   const [routeError,setRouteError]=useState("");
+  const [detourFilter,setDetourFilter]=useState(5); // km
+  const routeMapRef=useRef(null);
+  const routeMapInst=useRef(null);
   // Map filter
   const [mapFilter,setMapFilter]=useState("all");
 
@@ -2488,58 +2527,62 @@ function TankRadar(){
             {subView==="route"&&(
               <div style={{display:"flex",flexDirection:"column",gap:10}}>
                 <Hint id="route_intro" emoji="🛣">{lang==="de"?"Finde die günstigste Tankstelle auf deiner Strecke — keine überteuerte Autobahn-Tankstelle mehr!":"Find the cheapest station on your route — no more overpriced highway stations!"}</Hint>
-                <div style={s.card}>
-                  <div style={s.cardT}>🗺 {lang==="de"?"Streckenplaner":"Route Planner"}</div>
-                  <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                    <div>
-                      <div style={{fontSize:11,color:C.muted,marginBottom:3}}>{lang==="de"?"Start (GPS oder Standort)":"Start (GPS or location)"}</div>
-                      <div style={{...s.input,background:C.greenGlow,border:`1px solid ${C.green}`,display:"flex",alignItems:"center",gap:6,padding:"8px 12px"}}>
-                        <span>📍</span><span style={{fontSize:12}}>{loc.name?.split(",")[0]||"GPS"}</span>
-                      </div>
-                    </div>
-                    <div>
-                      <div style={{fontSize:11,color:C.muted,marginBottom:3}}>{lang==="de"?"Ziel":"Destination"}</div>
-                      <input value={routeDest} onChange={e=>{setRouteDest(e.target.value);searchRouteDest(e.target.value)}}
-                        placeholder={lang==="de"?"z.B. Hamburg, München, Berlin...":"e.g. Hamburg, Munich, Berlin..."}
-                        style={s.input} onKeyDown={e=>e.key==="Enter"&&routeDestCoords&&planRoute()}/>
-                      {routeDestResults.length>0&&!routeDestCoords&&(
-                        <div style={{marginTop:4,borderRadius:8,border:`1px solid ${C.border}`,overflow:"hidden"}}>
-                          {routeDestResults.map((r,i)=>(
-                            <div key={i} onClick={()=>{setRouteDestCoords(r);setRouteDest(r.name);setRouteDestResults([])}}
-                              style={{padding:"8px 12px",fontSize:12,cursor:"pointer",background:C.glass,borderBottom:i<routeDestResults.length-1?`1px solid ${C.border}`:"none"}}>
-                              {r.name}
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                {/* Search bar */}
+                <div style={{...s.card,padding:12}}>
+                  <div style={{display:"flex",gap:8,alignItems:"flex-end",flexWrap:"wrap"}}>
+                    <div style={{flex:"1 1 200px"}}>
+                      <div style={{fontSize:10,color:C.muted,marginBottom:3}}>{lang==="de"?"Ziel":"Destination"}</div>
+                      <input value={routeDest} onChange={e=>{setRouteDest(e.target.value);setRouteDestCoords(null);searchRouteDest(e.target.value)}}
+                        placeholder={lang==="de"?"z.B. Hamburg, München...":"e.g. Hamburg, Munich..."}
+                        style={{...s.input,fontSize:13}} onKeyDown={e=>e.key==="Enter"&&routeDestCoords&&planRoute()}/>
                     </div>
                     <button onClick={planRoute} disabled={!routeDestCoords||routeLoading}
-                      style={{...s.btn,width:"100%",opacity:routeDestCoords&&!routeLoading?1:.5,padding:12}}>
-                      {routeLoading?<span className="pulsing">{lang==="de"?"Suche läuft...":"Searching..."}</span>
-                        :<span>🔍 {lang==="de"?"Günstigste Tankstellen finden":"Find cheapest stations"}</span>}
+                      style={{...s.btn,padding:"10px 16px",opacity:routeDestCoords&&!routeLoading?1:.4,whiteSpace:"nowrap"}}>
+                      {routeLoading?"⏳":"🔍"}
                     </button>
                   </div>
+                  {routeDestResults.length>0&&!routeDestCoords&&(
+                    <div style={{marginTop:6,borderRadius:8,border:`1px solid ${C.border}`,overflow:"hidden"}}>
+                      {routeDestResults.map((r,i)=>(
+                        <div key={i} onClick={()=>{setRouteDestCoords(r);setRouteDest(r.name);setRouteDestResults([])}}
+                          style={{padding:"8px 12px",fontSize:12,cursor:"pointer",background:C.glass,borderBottom:i<routeDestResults.length-1?`1px solid ${C.border}`:"none"}}>
+                          📍 {r.name}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 {routeError&&<div style={{color:C.red,fontSize:12,padding:8}}>{routeError}</div>}
+                {/* Map + results */}
                 {routeData&&(
                   <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                    <div style={{display:"flex",gap:8}}>
-                      <div style={{...s.card,flex:1,padding:"10px 12px",textAlign:"center"}}>
-                        <div style={{fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:".08em"}}>Strecke</div>
-                        <div style={{fontFamily:"JetBrains Mono,monospace",fontSize:16,fontWeight:800}}>{routeData.route.distance} km</div>
+                    {/* Route stats */}
+                    <div style={{display:"flex",gap:6}}>
+                      <div style={{...s.card,flex:1,padding:"8px 10px",textAlign:"center"}}>
+                        <div style={{fontSize:8,color:C.muted,textTransform:"uppercase",letterSpacing:".08em"}}>Strecke</div>
+                        <div style={{fontFamily:"JetBrains Mono,monospace",fontSize:14,fontWeight:800}}>{routeData.route.distance}km</div>
                       </div>
-                      <div style={{...s.card,flex:1,padding:"10px 12px",textAlign:"center"}}>
-                        <div style={{fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:".08em"}}>Fahrzeit</div>
-                        <div style={{fontFamily:"JetBrains Mono,monospace",fontSize:16,fontWeight:800}}>{routeData.route.duration} min</div>
+                      <div style={{...s.card,flex:1,padding:"8px 10px",textAlign:"center"}}>
+                        <div style={{fontSize:8,color:C.muted,textTransform:"uppercase",letterSpacing:".08em"}}>Fahrzeit</div>
+                        <div style={{fontFamily:"JetBrains Mono,monospace",fontSize:14,fontWeight:800}}>{routeData.route.duration}min</div>
                       </div>
-                      <div style={{...s.card,flex:1,padding:"10px 12px",textAlign:"center"}}>
-                        <div style={{fontSize:9,color:C.muted,textTransform:"uppercase",letterSpacing:".08em"}}>{lang==="de"?"Stationen":"Stations"}</div>
-                        <div style={{fontFamily:"JetBrains Mono,monospace",fontSize:16,fontWeight:800,color:C.green}}>{routeData.totalFound}</div>
+                      <div style={{...s.card,flex:1,padding:"8px 10px",textAlign:"center"}}>
+                        <div style={{fontSize:8,color:C.muted,textTransform:"uppercase",letterSpacing:".08em"}}>{lang==="de"?"Stationen":"Stations"}</div>
+                        <div style={{fontFamily:"JetBrains Mono,monospace",fontSize:14,fontWeight:800,color:C.green}}>{routeData.stations.filter(st=>st.detourKm<=detourFilter*2).length}</div>
                       </div>
                     </div>
+                    {/* Detour filter */}
+                    <div style={{display:"flex",gap:4}}>
+                      {[{km:2,label:"≤2km"},{km:5,label:"≤5km"},{km:10,label:"≤10km"}].map(f=>(
+                        <div key={f.km} style={s.pill(detourFilter===f.km)} onClick={()=>setDetourFilter(f.km)}>{f.label} {lang==="de"?"Umweg":"detour"}</div>
+                      ))}
+                    </div>
+                    {/* Route map */}
+                    <div ref={routeMapRef} style={{height:"min(400px, 50vh)",borderRadius:14,border:`1px solid ${C.glassBorder}`}}/>
+                    {/* Station list below map */}
                     <div style={s.card}>
                       <div style={s.cardT}>{lang==="de"?"Günstigste auf der Strecke":"Cheapest on route"} · {fuel.toUpperCase()}</div>
-                      {routeData.stations.slice(0,10).map((st,i)=>{
+                      {routeData.stations.filter(st=>st.detourKm<=detourFilter*2).slice(0,10).map((st,i)=>{
                         const bb=brandBadge(st.brand,22);
                         return(
                           <div key={st.id} style={{...s.row,gap:8}}>
@@ -2547,11 +2590,11 @@ function TankRadar(){
                               {bb?<div style={bb}>{BRANDS[st.brand]?.short}</div>:<span style={{color:C.muted,fontFamily:"monospace",fontSize:10}}>#{i+1}</span>}
                               <div style={{flex:1,minWidth:0}}>
                                 <div style={{fontWeight:600,fontSize:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{st.brand||st.name}</div>
-                                <div style={{color:C.muted,fontSize:11}}>{st.place} · <span style={{color:C.amber}}>+{st.detourKm}km (~{st.detourMin}min)</span></div>
+                                <div style={{color:C.muted,fontSize:11}}>{st.place} · <span style={{color:C.amber}}>+{st.detourKm}km ~{st.detourMin}min</span></div>
                               </div>
                             </div>
                             <div style={{fontFamily:"JetBrains Mono,monospace",fontSize:16,fontWeight:700,color:i===0?C.green:C.text,flexShrink:0}}>{fmt(st.price)}</div>
-                            <div onClick={()=>openNavWithWaypoint(st)} style={{cursor:"pointer",fontSize:16,flexShrink:0,padding:"4px"}}>🧭</div>
+                            <div onClick={()=>openNavWithWaypoint(st)} style={{cursor:"pointer",fontSize:16,flexShrink:0,padding:"4px",borderRadius:8,background:C.glass}}>🧭</div>
                           </div>
                         );
                       })}
