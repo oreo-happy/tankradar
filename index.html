@@ -924,7 +924,22 @@ function TankRadar(){
     ev.sort((a,b)=>a.days-b.days);return ev.slice(0,8);
   },[]);
 
+  // Market history from Supabase (continuous, no gaps)
+  const [serverHistory,setServerHistory]=useState([]);
+  useEffect(()=>{
+    (async()=>{
+      try{
+        const r=await fetch(`/api/market-history?fuel=${fuel}&days=30`);
+        const d=await r.json();
+        if(d.ok&&d.data?.length)setServerHistory(d.data);
+      }catch{}
+    })();
+  },[fuel]);
+
   const historyData=useMemo(()=>{
+    // Prefer server data, supplement with localStorage for today
+    if(serverHistory.length>0)return serverHistory;
+    // Fallback to localStorage if API not available
     const hist=S.json(`hist_${fuel}`,[]);
     if(hist.length<2)return[];
     const byDay={};
@@ -937,14 +952,9 @@ function TankRadar(){
     return Object.entries(byDay).sort(([a],[b])=>a.localeCompare(b)).map(([date,v])=>{
       const avgOfAvgs=+(v.avgs.reduce((a,b)=>a+b,0)/v.avgs.length).toFixed(3);
       const minOfMins=v.mins.length>0?Math.min(...v.mins):avgOfAvgs;
-      return{
-        ts:new Date(date+"T12:00:00").getTime(),
-        date,
-        avg:avgOfAvgs,
-        min:+minOfMins.toFixed(3),
-      };
+      return{ts:new Date(date+"T12:00:00").getTime(),date,avg:avgOfAvgs,min:+minOfMins.toFixed(3)};
     });
-  },[fuel,lastFetch]);
+  },[fuel,lastFetch,serverHistory]);
 
   // ─── SHARE ──────────────────────────────────────────────────
   const sharePrice=()=>{
