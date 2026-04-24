@@ -199,6 +199,18 @@ export default async function handler(req, res) {
       ? +(allStationAvgs.reduce((a, b) => a + b, 0) / allStationAvgs.length).toFixed(3)
       : 0;
 
+    // Rolling 7-day base price for forecasting (much more accurate than all-time avg)
+    const sevenDaysAgo = Date.now() - 7 * 86400000;
+    const recentPrices = [];
+    for (const row of allData) {
+      if (row.fuel_type !== "e10") continue;
+      const ts = new Date(row.fetched_at).getTime();
+      if (ts >= sevenDaysAgo) recentPrices.push(parseFloat(row.price));
+    }
+    const recentBase = recentPrices.length > 0
+      ? +(recentPrices.reduce((a, b) => a + b, 0) / recentPrices.length).toFixed(3)
+      : marketAvg;
+
     // Best overall hours across all stations
     const globalHourly = Array.from({ length: 24 }, () => []);
     for (const m of Object.values(model)) {
@@ -541,13 +553,14 @@ export default async function handler(req, res) {
       }
       const actualDates = Object.keys(dailyActuals).sort();
 
-      // Helper: predict price for a given date using current model
+      // Helper: predict daily AVERAGE price for a date using current model
+      // Important: avg is the daily average, not the noon price.
+      // Hourly deltas sum to ~0 across 24h, so daily avg = base + day-of-week delta + vacation
       const predictForDate = (dateStr) => {
         const d = new Date(dateStr + "T12:00:00Z");
         const dow = (d.getUTCDay() + 6) % 7; // Mon=0
-        const hBest = +(globalHourlyAvg[19] || 0); // best hour ~19:00
-        const hWorst = +(globalHourlyAvg[6] || 0);  // worst hour ~6:00
-        const hAvg = +(globalHourlyAvg[12] || 0);   // midday as avg proxy
+        const hBest = +(globalHourlyAvg[19] || 0); // best hour for "best price seen that day"
+        const hWorst = +(globalHourlyAvg[10] || 0); // worst hour ~10:00 under regulation
         const dDelta = +(globalDailyAvg[dow] || 0);
 
         // Vacation check
@@ -557,9 +570,10 @@ export default async function handler(req, res) {
           if (diff >= -1 && diff <= 5) { vacDelta = 4; break; }
         }
 
-        const base = marketAvg;
+        // Use recent 7-day base, not all-time marketAvg
+        const base = recentBase;
         return {
-          avg: +(base + (hAvg + dDelta + vacDelta) / 100).toFixed(3),
+          avg: +(base + (dDelta + vacDelta) / 100).toFixed(3),
           best: +(base + (hBest + dDelta + vacDelta) / 100).toFixed(3),
           worst: +(base + (hWorst + dDelta + vacDelta) / 100).toFixed(3),
         };
@@ -682,9 +696,9 @@ export default async function handler(req, res) {
       }
 
       // 5d. COMPUTE ACCURACY & BIAS CORRECTIONS ──────────────────
-      // Fetch all evaluated forecasts
+      // Fetch evaluated forecasts — EXCLUDE backtests (they pollute the metric)
       const evalRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/forecast_snapshots?error_ct=not.is.null&fuel_type=eq.e10&order=forecast_date.desc&limit=1000`,
+        `${SUPABASE_URL}/rest/v1/forecast_snapshots?error_ct=not.is.null&fuel_type=eq.e10&model_version=not.like.backtest_*&order=forecast_date.desc&limit=1000`,
         { headers }
       );
       const evalRows = await evalRes.json();
