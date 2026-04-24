@@ -782,20 +782,6 @@ function TankRadar(){
   // ─── FETCH OIL PRICE ──────────────────────────────────────────
   const [brentLoading,setBrentLoading]=useState(false);
   const OIL_API_KEY="";
-  const fetchBrent=useCallback(async()=>{
-    setBrentLoading(true);
-    // 1. Fetch EUR/USD rate (Frankfurter API — free, no CORS issues)
-    try{const r=await fetch("https://api.frankfurter.app/latest?from=USD&to=EUR");const d=await r.json();if(d.rates?.EUR)S.set("usd_eur",String(d.rates.EUR))}catch{}
-    // 2. Use Brent from ML model (fetched by backend via Yahoo Finance + EIA)
-    if(mlModel?.brent?.latest?.price){
-      const price=mlModel.brent.latest.price;
-      setBrent(+price.toFixed(2));setBrentAuto(true);
-      setBrentTs(mlModel.brent.latest.date);S.set("brent",String(price.toFixed(2)));S.set("brent_ts",mlModel.brent.latest.date);
-    }
-    setBrentLoading(false);
-  },[mlModel]);
-  useEffect(()=>{fetchBrent()},[mlModel]);
-
   // ─── LOAD ML MODEL ──────────────────────────────────────────
   const [mlModel,setMlModel]=useState(null);
   useEffect(()=>{
@@ -807,6 +793,19 @@ function TankRadar(){
       }catch{}
     })();
   },[]);
+
+  const fetchBrent=useCallback(async()=>{
+    setBrentLoading(true);
+    try{const r=await fetch("https://api.frankfurter.app/latest?from=USD&to=EUR");const d=await r.json();if(d.rates?.EUR)S.set("usd_eur",String(d.rates.EUR))}catch{}
+    if(mlModel?.brent?.latest?.price){
+      const price=mlModel.brent.latest.price;
+      setBrent(+price.toFixed(2));setBrentAuto(true);
+      setBrentTs(mlModel.brent.latest.date);
+      S.set("brent",String(price.toFixed(2)));S.set("brent_ts",mlModel.brent.latest.date);
+    }
+    setBrentLoading(false);
+  },[mlModel]);
+  useEffect(()=>{if(mlModel)fetchBrent()},[mlModel,fetchBrent]);
 
   // ─── GEOCODING ──────────────────────────────────────────────
   const searchLocation=async(q)=>{
